@@ -1,0 +1,3 @@
+# Separate Anime365 access from Watch History ownership
+
+Miraio authenticates with Anime365's documented email-and-password token issuance flow and persists only the resulting Access Token in a private, non-synchronizing data-protection Keychain item; the email and password remain transient. Local sign-out deletes that item and clears authenticated in-memory state because Anime365 publishes no remote logout or token-revocation operation. Miraio owns the canonical, profile-specific Watch History and does not synchronize it through undocumented service behavior; if Anime365 publishes an official synchronization API, adopting it requires an explicit migration and conflict-resolution decision.
