@@ -60,6 +60,10 @@ _Avoid_: Playback record, Translation history
 The durable boundary through which accepted Playback Session progress becomes part of Watch History.
 _Avoid_: Watch History synchronization, progress sync
 
+**Watch History Recovery Copy**:
+An untouched, protected copy of an unavailable Watch History store retained after an explicitly confirmed reset until the Subscriber deletes it or a recovery procedure succeeds.
+_Avoid_: Backup, cache, diagnostic export, quarantine
+
 **Release Transaction**:
 The version-, tag-, and commit-bound operation that carries one Miraio release through publication and verified delivery to its supported distribution channel.
 _Avoid_: Release job, pipeline run
