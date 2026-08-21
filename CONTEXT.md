@@ -24,6 +24,10 @@ _Avoid_: Premium status, membership status
 The collection of anime Series available for discovery through Anime365.
 _Avoid_: Library, feed
 
+**Catalogue Refresh**:
+One bounded attempt to obtain current Catalogue data in response to demand or an application lifecycle event.
+_Avoid_: Catalogue synchronization, polling
+
 **Series**:
 A catalogue title whose playable content is organized into Episodes.
 _Avoid_: Show, title
@@ -51,6 +55,10 @@ _Avoid_: Activity, viewing log
 **Watch History Entry**:
 One Anime365 Profile's authoritative playback-progress record for one Episode, independent of the selected Translation.
 _Avoid_: Playback record, Translation history
+
+**Watch History Checkpoint**:
+The durable boundary through which accepted Playback Session progress becomes part of Watch History.
+_Avoid_: Watch History synchronization, progress sync
 
 **Release Transaction**:
 The version-, tag-, and commit-bound operation that carries one Miraio release through publication and verified delivery to its supported distribution channel.
