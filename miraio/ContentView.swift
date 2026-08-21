@@ -9,8 +9,8 @@ import SwiftUI
 
 struct ContentView: View {
     var body: some View {
-        CatalogueHistoryPrototype()
-            .frame(minWidth: 1_080, minHeight: 720)
+        VisualSystemPrototype()
+            .frame(minWidth: 1_150, minHeight: 760)
     }
 }
 

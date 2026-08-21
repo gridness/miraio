@@ -13,6 +13,6 @@ struct miraioApp: App {
         WindowGroup {
             ContentView()
         }
-        .defaultSize(width: 1_260, height: 820)
+        .defaultSize(width: 1_360, height: 900)
     }
 }
