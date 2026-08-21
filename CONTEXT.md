@@ -16,6 +16,10 @@ _Avoid_: User, customer, account holder
 The Anime365 entitlement that determines whether a Subscriber may use protected catalogue and playback capabilities.
 _Avoid_: Membership, plan, license
 
+**Subscription Eligibility**:
+The determination that an Anime365 Profile's Subscription is unknown, inactive, or active. Only an active determination makes that person a Subscriber.
+_Avoid_: Premium status, membership status
+
 **Catalogue**:
 The collection of anime Series available for discovery through Anime365.
 _Avoid_: Library, feed
@@ -28,6 +32,14 @@ _Avoid_: Show, title
 A playable installment of a Series.
 _Avoid_: Video, item
 
+**Translation**:
+A selectable Anime365 dub or subtitle translation belonging to one Episode.
+_Avoid_: Channel, rendition, version
+
+**Playback Session**:
+One continuous attempt to play an Episode using a selected Translation.
+_Avoid_: Login session, stream
+
 **Access Token**:
 The persistent secret Anime365 issues to authorize an Anime365 Profile's protected capabilities.
 _Avoid_: Session, refresh token, password
@@ -35,3 +47,7 @@ _Avoid_: Session, refresh token, password
 **Watch History**:
 Miraio's authoritative Anime365 Profile-specific record of Episodes watched and their playback progress.
 _Avoid_: Activity, viewing log
+
+**Watch History Entry**:
+One Anime365 Profile's authoritative playback-progress record for one Episode, independent of the selected Translation.
+_Avoid_: Playback record, Translation history
