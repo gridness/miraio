@@ -1211,6 +1211,7 @@ struct VisualSystemPrototype: View {
                 .clipShape(RoundedRectangle(cornerRadius: radius))
         }
         .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: radius))
         .accessibilityLabel(copy("Poster placeholder for \(series.title)", "Заглушка постера: \(series.title)"))
     }
 
