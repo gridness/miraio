@@ -20,7 +20,7 @@ private enum PrototypeVariant: String, CaseIterable, Identifiable {
         switch self {
         case .nativeFirst: "Native first"
         case .inspector: "Playback inspector"
-        case .headsUp: "Heads-up choices"
+        case .headsUp: "Hover HUD + inspector"
         }
     }
 }
@@ -48,7 +48,10 @@ struct PlaybackExperiencePrototype: View {
     @State private var subtitles = "Russian · external ASS"
     @State private var subtitleCase = SubtitleStressCase.dialogue
     @State private var recoveryNotice: String?
+    @State private var isHoveringPlayback = false
+    @State private var isInspectorPresented = false
     @State private var player = AVPlayer(url: Self.sampleURL)
+    @FocusState private var isPlaybackFocused: Bool
 
     private let translations = [
         "AniLibria · Russian dub",
@@ -171,67 +174,99 @@ struct PlaybackExperiencePrototype: View {
 
             Divider()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Label("Playback", systemImage: "slider.horizontal.3")
-                        .font(.headline)
-
-                    optionPicker("Translation", selection: $translation, values: translations)
-                    optionPicker("Source", selection: $source, values: sources)
-                    optionPicker("Quality", selection: $quality, values: qualities)
-                    optionPicker("Audio", selection: $audio, values: audioOptions)
-                    optionPicker("Subtitles", selection: $subtitles, values: subtitleOptions)
-
-                    Divider()
-                    subtitleStressMenu
-
-                    Divider()
-                    recoveryButton
-                }
-                .padding(18)
-            }
-            .frame(width: 300)
-            .background(Color(nsColor: .controlBackgroundColor))
+            inspectorPanel
         }
     }
 
-    // Variant C makes choices transient and spatially close to the picture.
-    // It is the most immersive, but it also carries the highest risk of
-    // fighting native controls and disappearing during AVKit full screen/PiP.
+    // Winning direction: C is transient on playback hover or keyboard focus;
+    // B remains available as an on-demand persistent inspector.
     private var headsUpVariant: some View {
-        ZStack(alignment: .top) {
-            nativePlayer
+        HStack(spacing: 0) {
+            ZStack(alignment: .top) {
+                nativePlayer
 
-            VStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    compactChoice("Translation", value: translation) {
-                        choiceButtons(values: translations, selection: $translation)
-                    }
-                    compactChoice("Source", value: source) {
-                        choiceButtons(values: sources, selection: $source)
-                    }
-                    compactChoice("Quality", value: quality) {
-                        choiceButtons(values: qualities, selection: $quality)
-                    }
-                    compactChoice("Subtitles", value: subtitles) {
-                        choiceButtons(values: subtitleOptions, selection: $subtitles)
-                    }
-                    Spacer()
-                    recoveryButton
+                if isHoveringPlayback || isPlaybackFocused {
+                    headsUpControls
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                .padding(10)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                .shadow(radius: 10, y: 4)
-
-                HStack {
-                    rendererStatus
-                    Spacer()
-                    subtitleStressPicker
-                }
-                .padding(.horizontal, 10)
             }
-            .padding(16)
+            .focusable()
+            .focused($isPlaybackFocused)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.16)) {
+                    isHoveringPlayback = hovering
+                }
+            }
+
+            if isInspectorPresented {
+                Divider()
+                inspectorPanel
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
         }
+        .animation(.easeOut(duration: 0.18), value: isInspectorPresented)
+    }
+
+    private var headsUpControls: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                compactChoice("Translation", value: translation) {
+                    choiceButtons(values: translations, selection: $translation)
+                }
+                compactChoice("Source", value: source) {
+                    choiceButtons(values: sources, selection: $source)
+                }
+                compactChoice("Quality", value: quality) {
+                    choiceButtons(values: qualities, selection: $quality)
+                }
+                compactChoice("Subtitles", value: subtitles) {
+                    choiceButtons(values: subtitleOptions, selection: $subtitles)
+                }
+                Spacer()
+                recoveryButton
+                Button(
+                    isInspectorPresented ? "Hide Inspector" : "Inspector",
+                    systemImage: "sidebar.right"
+                ) {
+                    isInspectorPresented.toggle()
+                }
+            }
+            .padding(10)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .shadow(radius: 10, y: 4)
+
+            HStack {
+                rendererStatus
+                Spacer()
+                subtitleStressPicker
+            }
+            .padding(.horizontal, 10)
+        }
+        .padding(16)
+    }
+
+    private var inspectorPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Label("Playback", systemImage: "slider.horizontal.3")
+                    .font(.headline)
+
+                optionPicker("Translation", selection: $translation, values: translations)
+                optionPicker("Source", selection: $source, values: sources)
+                optionPicker("Quality", selection: $quality, values: qualities)
+                optionPicker("Audio", selection: $audio, values: audioOptions)
+                optionPicker("Subtitles", selection: $subtitles, values: subtitleOptions)
+
+                Divider()
+                subtitleStressMenu
+
+                Divider()
+                recoveryButton
+            }
+            .padding(18)
+        }
+        .frame(width: 300)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private var nativePlayer: some View {
