@@ -20,19 +20,22 @@ Environment: macOS 26.6.2, Apple Silicon, Xcode 26.6, libass 0.17.5 from Homebre
 - The prototype binary is ad-hoc signed and references `/opt/homebrew/opt/libass/lib/libass.9.dylib`. It is therefore intentionally unsuitable for sandboxed, notarized, Cask, or App Store distribution.
 - A production integration needs a reproducible minimal arm64 Apple-platform build, embedded code-signed libraries or XCFrameworks, relative install names/rpaths, a complete transitive SBOM/notices bundle, hardened-runtime and App Sandbox verification, notarization, and App Review/license review. The CoreText provider avoids a runtime fontconfig dependency, but the exact production link graph must be audited rather than inferred from Homebrew.
 
-## Provisional decision
+## Human walkthrough result
+
+Recorded 2026-08-21:
+
+- Core fidelity, seeking, playback speeds, full screen, VoiceOver semantic output, and selective dialogue boost passed without observed misbehavior.
+- Neither the libass overlay nor the flattened `AVCaptionRenderer` overlay was visible in native Picture in Picture.
+
+## Decision
 
 Choose libass behind the already-agreed supplemental renderer boundary; reject `AVCaptionRenderer` as the ASS engine. Keep Apple captions for native caption formats or deliberately simplified non-ASS inputs, not as a conversion target for Anime365 ASS.
 
-The final PiP policy remains human-gated because Apple does not document arbitrary `contentOverlayView` content as part of native PiP. If the walkthrough confirms the overlay is absent, the conservative V1 policy is to disable PiP while external ASS is selected rather than silently remove required subtitles or introduce a custom composited-video path that compromises native controls and the energy target.
+Because native PiP omits both supplemental overlays, disable PiP while external ASS is selected. Keep native PiP available when AVKit owns the active subtitle rendition or no subtitles are selected. Do not silently drop selected external subtitles, and do not add a custom composited-video/PiP path that would replace native playback ownership and threaten the energy target.
 
-## Human result to record
+The controlled Power Profiler ratio was not measured in the human walkthrough. The prototype includes paired `AVKit only` and `libass` modes so implementation acceptance can enforce the existing `median(libass / AVKit only) <= 1.10` release gate under fixed conditions. The single captured 8.70 ms animated-frame render remains diagnostic only.
 
-- Core dialogue/sign/overlap/style/karaoke/motion: pass/fail and exceptions.
-- Seek and 0.5×/2× synchronization: pass/fail.
-- Window resize and native full screen: pass/fail.
-- PiP with libass: overlay visible/absent/failed.
-- PiP with Apple captions: overlay visible/absent/failed.
-- VoiceOver active semantic text: pass/fail.
-- Selective 25% dialogue boost leaves explicit sign placement intact: pass/fail.
+## Acceptance results still to record during implementation
+
 - Controlled paired Power Profiler result: median net-energy ratio and run conditions, or explicitly deferred release gate.
+- Production vendored-build fuzzing, memory-pressure, sandbox, signing, notarization, transitive-license, and App Review results.
