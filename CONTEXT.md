@@ -51,3 +51,15 @@ _Avoid_: Activity, viewing log
 **Watch History Entry**:
 One Anime365 Profile's authoritative playback-progress record for one Episode, independent of the selected Translation.
 _Avoid_: Playback record, Translation history
+
+**Release Transaction**:
+The version-, tag-, and commit-bound operation that carries one Miraio release through publication and verified delivery to its supported distribution channel.
+_Avoid_: Release job, pipeline run
+
+**Release Incident**:
+One durable, redacted record of an unresolved failure affecting a Release Transaction.
+_Avoid_: Failed run, alert
+
+**Release Operator**:
+The designated maintainer accountable for Release Incidents and Miraio's long-lived release credentials.
+_Avoid_: On-call, release admin
