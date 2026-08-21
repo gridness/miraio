@@ -1,0 +1,24 @@
+[Script Info]
+Title: Miraio supplemental renderer boundary prototype
+ScriptType: v4.00+
+PlayResX: 960
+PlayResY: 540
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Dialogue,Helvetica Neue,34,&H00FFFFFF,&H0000FFFF,&H00101820,&H80000000,0,0,0,0,100,100,0,0,1,3,1,2,48,48,38,1
+Style: Emphasis,Helvetica Neue,38,&H004FD5FF,&H0000FFFF,&H00101820,&H80000000,-1,-1,0,0,100,100,1,0,1,4,1,2,48,48,40,1
+Style: Sign,Avenir Next,40,&H0037F3B4,&H0000FFFF,&H00101820,&H80000000,-1,0,0,0,100,100,2,0,1,3,1,8,28,28,28,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:04.00,Dialogue,Speaker,0,0,0,,Core dialogue · точное время
+Dialogue: 1,0:00:04.00,0:00:08.00,Sign,Sign,0,0,0,,{\an8\pos(480,72)\frz-2}AUTHORED POSITION
+Dialogue: 0,0:00:08.00,0:00:12.00,Dialogue,Speaker A,0,0,74,,First overlapping line
+Dialogue: 1,0:00:08.00,0:00:12.00,Emphasis,Speaker B,0,0,26,,Second layer keeps its style
+Dialogue: 0,0:00:12.00,0:00:16.00,Emphasis,Speaker,0,0,0,,Bold italic, color, outline, shadow
+Dialogue: 0,0:00:16.00,0:00:20.00,Dialogue,Speaker,0,0,0,,{\k24}Ka{\k24}ra{\k24}o{\k24}ke {\k48}progress
+Dialogue: 0,0:00:20.00,0:00:24.00,Dialogue,Speaker,0,0,0,,{\move(180,450,780,120)\t(0,4000,\frz360)\c&H4FD5FF&}Advanced motion may degrade readably
+Dialogue: 2,0:00:20.00,0:00:24.00,Sign,Graphic,0,0,0,,{\an7\pos(64,72)\p1\bord1\shad0\c&H37F3B4&}m 0 0 l 120 0 120 40 0 40{\p0}
