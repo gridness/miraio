@@ -1,4 +1,4 @@
-MIRAIO_MARKETING_VERSION = 0.1.0 // x-release-please-version
+MIRAIO_MARKETING_VERSION = 0.2.0 // x-release-please-version
 
 // CI overrides this with the protected mainline commit count.
 MIRAIO_BUILD_NUMBER = 1
