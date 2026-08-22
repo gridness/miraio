@@ -13,9 +13,33 @@ import SwiftUI
 @MainActor
 final class AppComposition {
   let lifecycle: ApplicationLifecycleAuthority
+  let catalogueModel: CatalogueViewModel
+  let artwork: any ArtworkLoading
 
   init(lifecycle: ApplicationLifecycleAuthority? = nil) {
-    self.lifecycle = lifecycle ?? Self.makeLiveLifecycleAuthority()
+    let diagnostics = OSLogDiagnostics()
+    let cacheRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
+      .first!
+      .appending(path: "Miraio", directoryHint: .isDirectory)
+    let catalogueCache = BoundedCatalogueCache(
+      directoryURL: cacheRoot.appending(path: "Catalogue", directoryHint: .isDirectory)
+    )
+    let remote = Anime365CatalogueClient(
+      userAgent: "Miraio/\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development")",
+      diagnostics: diagnostics
+    )
+    let discovery = CatalogueDiscovery(remote: remote, cache: catalogueCache)
+    let artwork = ArtworkClient(
+      cacheDirectoryURL: cacheRoot.appending(path: "Artwork", directoryHint: .isDirectory)
+    )
+
+    self.artwork = artwork
+    catalogueModel = CatalogueViewModel(discovery: discovery)
+    self.lifecycle = lifecycle ?? Self.makeLiveLifecycleAuthority(
+      discovery: discovery,
+      artwork: artwork,
+      diagnostics: diagnostics
+    )
   }
 
   func scenePhaseChanged(to scenePhase: ScenePhase) async {
@@ -39,17 +63,27 @@ final class AppComposition {
     await lifecycle.submit(.signOutRequested)
   }
 
-  private static func makeLiveLifecycleAuthority() -> ApplicationLifecycleAuthority {
+  private static func makeLiveLifecycleAuthority(
+    discovery: CatalogueDiscovery,
+    artwork: any ArtworkLoading,
+    diagnostics: any RedactedDiagnostics
+  ) -> ApplicationLifecycleAuthority {
     ApplicationLifecycleAuthority(
       environment: ApplicationEnvironment(
         now: Date.init,
         makeAttemptID: UUID.init,
-        diagnostics: OSLogDiagnostics(),
+        diagnostics: diagnostics,
         lifecycle: LifecycleCapabilities(
           revalidateSubscription: {},
           checkpointWatchHistory: {},
-          cancelNonessentialWork: {},
-          releaseVolatileCaches: {},
+          cancelNonessentialWork: {
+            await discovery.cancelNonessentialWork()
+            await artwork.cancelNonessentialWork()
+          },
+          releaseVolatileCaches: {
+            await discovery.releaseVolatileCaches()
+            await artwork.releaseDecodedImages()
+          },
           cancelProtectedWork: {},
           clearProtectedState: {}
         )

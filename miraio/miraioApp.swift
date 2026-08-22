@@ -15,9 +15,12 @@ struct MiraioApp: App {
 
   var body: some Scene {
     WindowGroup {
-      MiraioRootView()
+      MiraioRootView(model: composition.catalogueModel, artwork: composition.artwork)
         .task(id: scenePhase) {
           await composition.scenePhaseChanged(to: scenePhase)
+          if scenePhase == .active {
+            await composition.catalogueModel.loadCatalogue()
+          }
         }
     }
     .defaultSize(width: 960, height: 640)

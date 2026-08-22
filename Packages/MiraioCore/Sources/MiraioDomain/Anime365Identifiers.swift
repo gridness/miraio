@@ -1,12 +1,12 @@
 import Foundation
 
 private enum Anime365IdentifierValue {
-  static func validate(_ rawValue: String) -> String? {
-    rawValue.isEmpty ? nil : rawValue
+  static func validate(_ rawValue: Int) -> Int? {
+    rawValue > 0 ? rawValue : nil
   }
 
-  static func decode(from decoder: any Decoder, name: String) throws -> String {
-    let rawValue = try decoder.singleValueContainer().decode(String.self)
+  static func decode(from decoder: any Decoder, name: String) throws -> Int {
+    let rawValue = try decoder.singleValueContainer().decode(Int.self)
     guard let rawValue = validate(rawValue) else {
       throw DecodingError.dataCorrupted(
         .init(codingPath: decoder.codingPath, debugDescription: "\(name) is empty")
@@ -15,16 +15,16 @@ private enum Anime365IdentifierValue {
     return rawValue
   }
 
-  static func encode(_ rawValue: String, to encoder: any Encoder) throws {
+  static func encode(_ rawValue: Int, to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }
 }
 
 public struct Anime365ProfileID: Codable, Hashable, Sendable {
-  public let rawValue: String
+  public let rawValue: Int
 
-  public init?(_ rawValue: String) {
+  public init?(_ rawValue: Int) {
     guard let rawValue = Anime365IdentifierValue.validate(rawValue) else { return nil }
     self.rawValue = rawValue
   }
@@ -39,9 +39,9 @@ public struct Anime365ProfileID: Codable, Hashable, Sendable {
 }
 
 public struct SeriesID: Codable, Hashable, Sendable {
-  public let rawValue: String
+  public let rawValue: Int
 
-  public init?(_ rawValue: String) {
+  public init?(_ rawValue: Int) {
     guard let rawValue = Anime365IdentifierValue.validate(rawValue) else { return nil }
     self.rawValue = rawValue
   }
@@ -56,9 +56,9 @@ public struct SeriesID: Codable, Hashable, Sendable {
 }
 
 public struct EpisodeID: Codable, Hashable, Sendable {
-  public let rawValue: String
+  public let rawValue: Int
 
-  public init?(_ rawValue: String) {
+  public init?(_ rawValue: Int) {
     guard let rawValue = Anime365IdentifierValue.validate(rawValue) else { return nil }
     self.rawValue = rawValue
   }
@@ -73,9 +73,9 @@ public struct EpisodeID: Codable, Hashable, Sendable {
 }
 
 public struct TranslationID: Codable, Hashable, Sendable {
-  public let rawValue: String
+  public let rawValue: Int
 
-  public init?(_ rawValue: String) {
+  public init?(_ rawValue: Int) {
     guard let rawValue = Anime365IdentifierValue.validate(rawValue) else { return nil }
     self.rawValue = rawValue
   }
