@@ -1,32 +1,25 @@
-//
-//  miraioApp.swift
-//  miraio
-//
-//  Created by Ivan King on 20.08.2026.
-//
-
 import SwiftUI
-import SwiftData
 
 @main
-struct miraioApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+struct MiraioApp: App {
+  @Environment(\.scenePhase) private var scenePhase
 
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+  private let composition: AppComposition
+  private let memoryPressureBridge: MemoryPressureBridge
 
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
+  init() {
+    let composition = AppComposition()
+    self.composition = composition
+    memoryPressureBridge = MemoryPressureBridge(lifecycle: composition.lifecycle)
+  }
+
+  var body: some Scene {
+    WindowGroup {
+      MiraioRootView()
+        .task(id: scenePhase) {
+          await composition.scenePhaseChanged(to: scenePhase)
         }
-        .modelContainer(sharedModelContainer)
     }
+    .defaultSize(width: 960, height: 640)
+  }
 }

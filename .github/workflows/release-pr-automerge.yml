@@ -1,0 +1,22 @@
+name: Release PR Auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable-auto-merge:
+    if: >-
+      github.event.pull_request.user.login == format('{0}[bot]', vars.RELEASE_APP_SLUG) &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release-please--')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge only after required checks pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr merge --repo "${{ github.repository }}" --squash --auto "${{ github.event.pull_request.number }}"
