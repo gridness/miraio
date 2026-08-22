@@ -119,6 +119,10 @@ public actor AuthenticationAuthority {
   private var activeCredential: StoredAccessToken?
   private var verifiedProfile: Anime365Profile?
   private var generation: UInt64 = 0
+  private var hasResolvedStoredCredential = false
+  private var isRestoreInProgress = false
+  private var isSignOutInProgress = false
+  private var signOutWaiters: [CheckedContinuation<SignOutOutcome, Never>] = []
   private var nextObserverID: UInt64 = 0
   private var observers: [UInt64: AsyncStream<AuthenticationState>.Continuation] = [:]
 
@@ -146,10 +150,14 @@ public actor AuthenticationAuthority {
   }
 
   public func restore() async {
+    guard !isRestoreInProgress, !isSignOutInProgress else { return }
+    isRestoreInProgress = true
+    defer { isRestoreInProgress = false }
     generation &+= 1
     let submittedGeneration = generation
     if await credentials.hasIncompleteSignOut() {
       guard generation == submittedGeneration else { return }
+      hasResolvedStoredCredential = true
       transition(to: .incompleteSignOut)
       return
     }
@@ -157,21 +165,28 @@ public actor AuthenticationAuthority {
     do {
       guard let storedToken = try await credentials.load() else {
         guard generation == submittedGeneration else { return }
+        hasResolvedStoredCredential = true
         transition(to: .signedOut)
         return
       }
       guard generation == submittedGeneration else { return }
+      hasResolvedStoredCredential = true
       activeCredential = storedToken
       transition(to: .verifying)
       await verify(storedToken, generation: submittedGeneration)
     } catch {
       guard generation == submittedGeneration else { return }
+      hasResolvedStoredCredential = true
       transition(to: .credentialUnavailable)
     }
   }
 
   public func signIn(email: String, password: String) async -> AuthenticationActionOutcome {
-    guard currentState == .signedOut else { return .blocked }
+    guard !isRestoreInProgress, !isSignOutInProgress else { return .blocked }
+    if !hasResolvedStoredCredential { await restore() }
+    guard !isRestoreInProgress, !isSignOutInProgress, currentState == .signedOut else {
+      return .blocked
+    }
     generation &+= 1
     let submittedGeneration = generation
     transition(to: .verifying)
@@ -215,29 +230,16 @@ public actor AuthenticationAuthority {
   }
 
   public func foregrounded() async {
-    guard isVerificationDue, let activeCredential else { return }
-    generation &+= 1
-    let submittedGeneration = generation
-
-    transition(to: .verifying)
-    await verify(activeCredential, generation: submittedGeneration)
+    guard isVerificationDue else { return }
+    await revalidateActiveCredential()
   }
 
   public func refreshEligibility() async {
-    guard let activeCredential else { return }
-    generation &+= 1
-    let submittedGeneration = generation
-    transition(to: .verifying)
-    await verify(activeCredential, generation: submittedGeneration)
+    await revalidateActiveCredential()
   }
 
   public func beginProtectedOperation() async -> ProtectedAccessDecision {
-    if isVerificationDue, let activeCredential {
-      generation &+= 1
-      let submittedGeneration = generation
-      transition(to: .verifying)
-      await verify(activeCredential, generation: submittedGeneration)
-    }
+    if isVerificationDue { await revalidateActiveCredential() }
 
     switch currentState {
     case .subscriber:
@@ -261,11 +263,8 @@ public actor AuthenticationAuthority {
   }
 
   public func resolveProtectedFailure() async -> ProtectedFailureResolution {
-    guard let activeCredential else { return .authenticationRequired }
-    generation &+= 1
-    let submittedGeneration = generation
-    transition(to: .verifying)
-    await verify(activeCredential, generation: submittedGeneration)
+    guard activeCredential != nil else { return .authenticationRequired }
+    await revalidateActiveCredential()
 
     switch currentState {
     case .signedOut:
@@ -285,6 +284,26 @@ public actor AuthenticationAuthority {
   }
 
   public func signOut() async -> SignOutOutcome {
+    if isSignOutInProgress { return await waitForSignOutCompletion() }
+    isSignOutInProgress = true
+    hasResolvedStoredCredential = true
+    let outcome = await performSignOut()
+    isSignOutInProgress = false
+    let waiters = signOutWaiters
+    signOutWaiters.removeAll()
+    for waiter in waiters { waiter.resume(returning: outcome) }
+    return outcome
+  }
+
+  public func retryIncompleteSignOut() async -> SignOutOutcome {
+    if isSignOutInProgress { return await waitForSignOutCompletion() }
+    guard currentState == .incompleteSignOut else {
+      return currentState == .signedOut ? .signedOut : .incomplete
+    }
+    return await signOut()
+  }
+
+  private func performSignOut() async -> SignOutOutcome {
     generation &+= 1
     let submittedGeneration = generation
     activeCredential = nil
@@ -308,11 +327,18 @@ public actor AuthenticationAuthority {
     }
   }
 
-  public func retryIncompleteSignOut() async -> SignOutOutcome {
-    guard currentState == .incompleteSignOut else {
-      return currentState == .signedOut ? .signedOut : .incomplete
+  private func waitForSignOutCompletion() async -> SignOutOutcome {
+    await withCheckedContinuation { continuation in
+      signOutWaiters.append(continuation)
     }
-    return await signOut()
+  }
+
+  private func revalidateActiveCredential() async {
+    guard let activeCredential else { return }
+    generation &+= 1
+    let submittedGeneration = generation
+    transition(to: .verifying)
+    await verify(activeCredential, generation: submittedGeneration)
   }
 
   private func verify(_ storedToken: StoredAccessToken, generation submittedGeneration: UInt64) async {

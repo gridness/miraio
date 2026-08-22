@@ -150,6 +150,7 @@ private struct AuthenticationControl: View {
           authentication.presentSignIn()
         }
         .buttonStyle(.borderedProminent)
+        .disabled(authentication.isPerformingAction)
         .accessibilityIdentifier("authentication.sign-in")
 
       case .credentialUnavailable:

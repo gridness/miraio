@@ -28,7 +28,7 @@ enum AuthenticationNotice: Equatable {
 @MainActor
 @Observable
 final class AuthenticationViewModel {
-  var state: AuthenticationState = .signedOut
+  var state: AuthenticationState = .verifying
   var email = ""
   var password = ""
   var notice: AuthenticationNotice?
@@ -62,7 +62,7 @@ final class AuthenticationViewModel {
   }
 
   func presentSignIn() {
-    guard state == .signedOut else { return }
+    guard state == .signedOut, !isPerformingAction else { return }
     notice = nil
     isSignInPresented = true
   }
@@ -75,68 +75,66 @@ final class AuthenticationViewModel {
   }
 
   func submitSignIn() async {
-    guard !isPerformingAction else { return }
-    let submittedEmail = email
-    let submittedPassword = password
-    password = ""
-    isPerformingAction = true
-    defer { isPerformingAction = false }
+    await performAction {
+      let submittedEmail = email
+      let submittedPassword = password
+      password = ""
 
-    let outcome = await authority.signIn(
-      email: submittedEmail,
-      password: submittedPassword
-    )
-    switch outcome {
-    case .authenticated:
-      email = ""
-      notice = nil
-      isSignInPresented = false
-    case .rejected:
-      notice = .rejectedSignIn
-    case .verificationUnavailable:
-      email = ""
-      notice = .verificationUnavailable
-      isSignInPresented = false
-    case .credentialUnavailable:
-      email = ""
-      notice = .credentialUnavailable
-      isSignInPresented = false
-    case .unavailable:
-      notice = .serviceUnavailable
-    case .blocked:
-      dismissSignIn()
+      let outcome = await authority.signIn(
+        email: submittedEmail,
+        password: submittedPassword
+      )
+      switch outcome {
+      case .authenticated:
+        email = ""
+        notice = nil
+        isSignInPresented = false
+      case .rejected:
+        notice = .rejectedSignIn
+      case .verificationUnavailable:
+        email = ""
+        notice = .verificationUnavailable
+        isSignInPresented = false
+      case .credentialUnavailable:
+        email = ""
+        notice = .credentialUnavailable
+        isSignInPresented = false
+      case .unavailable:
+        notice = .serviceUnavailable
+      case .blocked:
+        dismissSignIn()
+      }
     }
   }
 
   func refreshEligibility() async {
-    guard !isPerformingAction else { return }
-    isPerformingAction = true
-    defer { isPerformingAction = false }
-    await authority.refreshEligibility()
+    await performAction { await authority.refreshEligibility() }
   }
 
   func retryCredentialAccess() async {
-    guard !isPerformingAction else { return }
-    isPerformingAction = true
-    defer { isPerformingAction = false }
-    await authority.restore()
+    await performAction { await authority.restore() }
   }
 
   func signOut() async {
-    guard !isPerformingAction else { return }
-    isPerformingAction = true
-    defer { isPerformingAction = false }
-    email = ""
-    password = ""
-    notice = await authority.signOut() == .incomplete ? .incompleteSignOut : nil
+    await performAction {
+      email = ""
+      password = ""
+      notice = await authority.signOut() == .incomplete ? .incompleteSignOut : nil
+    }
   }
 
   func retryIncompleteSignOut() async {
+    await performAction {
+      notice = await authority.retryIncompleteSignOut() == .incomplete
+        ? .incompleteSignOut
+        : nil
+    }
+  }
+
+  private func performAction(_ action: () async -> Void) async {
     guard !isPerformingAction else { return }
     isPerformingAction = true
     defer { isPerformingAction = false }
-    notice = await authority.retryIncompleteSignOut() == .incomplete
-      ? .incompleteSignOut
-      : nil
+    await action()
   }
 }

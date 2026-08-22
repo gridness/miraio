@@ -133,7 +133,7 @@ struct Anime365AuthenticationClientTests {
     #expect(verification.eligibility == .inactive)
   }
 
-  @Test("login rejection is categorical even when the provider embeds 403 in HTTP 200")
+  @Test("sign-in rejection is categorical even when the provider embeds 403 in HTTP 200")
   func mapsRejectedSignInWithoutProviderMessage() async throws {
     let session = makeSession()
     AuthenticationURLProtocol.handler = { request in

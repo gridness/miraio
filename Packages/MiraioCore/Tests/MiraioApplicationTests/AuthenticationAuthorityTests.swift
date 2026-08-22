@@ -205,6 +205,75 @@ struct AuthenticationAuthorityTests {
     #expect(await vault.storedRecord == nil)
   }
 
+  @Test("sign-in stays blocked until sign-out credential deletion settles")
+  func blocksSignInDuringSignOutCleanup() async throws {
+    let token = try #require(AccessToken("new-token"))
+    let gate = AuthenticationGate()
+    let vault = GatedDeleteCredentialVault(gate: gate)
+    let authority = AuthenticationAuthority(
+      remote: AuthenticationRemoteStub(signInResult: .success(token)),
+      credentials: vault,
+      protectedSession: ProtectedSessionStub()
+    )
+
+    let signOut = Task { await authority.signOut() }
+    await gate.waitUntilSuspended()
+    let overlappingSignIn = await authority.signIn(
+      email: "other@example.com",
+      password: "transient"
+    )
+    await gate.resume()
+
+    #expect(overlappingSignIn == .blocked)
+    #expect(await signOut.value == .signedOut)
+    #expect(await authority.currentState == .signedOut)
+    #expect(await vault.storedRecord == nil)
+  }
+
+  @Test("cold-launch credential restoration blocks implicit Profile replacement")
+  func blocksSignInDuringColdLaunchRestore() async throws {
+    let existingToken = try #require(AccessToken("existing-token"))
+    let replacementToken = try #require(AccessToken("replacement-token"))
+    let existingProfileID = try #require(Anime365ProfileID(42))
+    let replacementProfileID = try #require(Anime365ProfileID(84))
+    let existingProfile = Anime365Profile(id: existingProfileID)
+    let replacementProfile = Anime365Profile(id: replacementProfileID)
+    let gate = AuthenticationGate()
+    let vault = GatedLoadCredentialVault(
+      gate: gate,
+      record: .bound(existingToken, profileID: existingProfileID)
+    )
+    let authority = AuthenticationAuthority(
+      remote: ProfileMappedAuthenticationRemote(
+        signInToken: replacementToken,
+        existingToken: existingToken,
+        existingVerification: Anime365ProfileVerification(
+          profile: existingProfile,
+          eligibility: .active
+        ),
+        replacementVerification: Anime365ProfileVerification(
+          profile: replacementProfile,
+          eligibility: .active
+        )
+      ),
+      credentials: vault,
+      protectedSession: ProtectedSessionStub()
+    )
+
+    let restore = Task { await authority.restore() }
+    await gate.waitUntilSuspended()
+    let overlappingSignIn = await authority.signIn(
+      email: "other@example.com",
+      password: "transient"
+    )
+    await gate.resume()
+    await restore.value
+
+    #expect(overlappingSignIn == .blocked)
+    #expect(await authority.currentState == .subscriber(existingProfile))
+    #expect(await vault.storedRecord == .bound(existingToken, profileID: existingProfileID))
+  }
+
   @Test("failed credential deletion persists a retryable incomplete sign-out")
   func persistsAndRetriesIncompleteSignOut() async throws {
     let token = try #require(AccessToken("secret"))
@@ -572,6 +641,84 @@ private actor GatedStoreCredentialVault: AccessTokenVault {
   var storedRecord: StoredAccessToken? { record }
 }
 
+private actor GatedDeleteCredentialVault: AccessTokenVault {
+  private let gate: AuthenticationGate
+  private var record: StoredAccessToken?
+  private var latestGeneration: UInt64 = 0
+
+  init(gate: AuthenticationGate) {
+    self.gate = gate
+  }
+
+  func load() -> StoredAccessToken? { record }
+  func storePending(_ token: AccessToken, generation: UInt64) throws {
+    try accept(generation)
+    record = .pending(token)
+  }
+  func bind(_ token: AccessToken, to profileID: Anime365ProfileID, generation: UInt64) throws {
+    try accept(generation)
+    record = .bound(token, profileID: profileID)
+  }
+  func delete(generation: UInt64) async throws {
+    await gate.suspend()
+    try accept(generation)
+    record = nil
+  }
+  func hasIncompleteSignOut() -> Bool { false }
+  func markIncompleteSignOut() {}
+  func clearIncompleteSignOut() {}
+
+  var storedRecord: StoredAccessToken? { record }
+
+  private func accept(_ generation: UInt64) throws {
+    guard generation >= latestGeneration else {
+      throw CredentialVaultTestFailure.obsoleteMutation
+    }
+    latestGeneration = generation
+  }
+}
+
+private actor GatedLoadCredentialVault: AccessTokenVault {
+  private let gate: AuthenticationGate
+  private var record: StoredAccessToken?
+  private var latestGeneration: UInt64 = 0
+
+  init(gate: AuthenticationGate, record: StoredAccessToken?) {
+    self.gate = gate
+    self.record = record
+  }
+
+  func load() async -> StoredAccessToken? {
+    let capturedRecord = record
+    await gate.suspend()
+    return capturedRecord
+  }
+  func storePending(_ token: AccessToken, generation: UInt64) throws {
+    try accept(generation)
+    record = .pending(token)
+  }
+  func bind(_ token: AccessToken, to profileID: Anime365ProfileID, generation: UInt64) throws {
+    try accept(generation)
+    record = .bound(token, profileID: profileID)
+  }
+  func delete(generation: UInt64) throws {
+    try accept(generation)
+    record = nil
+  }
+  func hasIncompleteSignOut() -> Bool { false }
+  func markIncompleteSignOut() {}
+  func clearIncompleteSignOut() {}
+
+  var storedRecord: StoredAccessToken? { record }
+
+  private func accept(_ generation: UInt64) throws {
+    guard generation >= latestGeneration else {
+      throw CredentialVaultTestFailure.obsoleteMutation
+    }
+    latestGeneration = generation
+  }
+}
+
 private actor FailingBindCredentialVault: AccessTokenVault {
   private var record: StoredAccessToken?
 
@@ -634,6 +781,19 @@ private actor AuthenticationRemoteRecorder: Anime365AuthenticationRemote {
   func profile(using token: AccessToken) async throws -> Anime365ProfileVerification {
     profileRequestCount += 1
     return profileResult
+  }
+}
+
+private struct ProfileMappedAuthenticationRemote: Anime365AuthenticationRemote {
+  let signInToken: AccessToken
+  let existingToken: AccessToken
+  let existingVerification: Anime365ProfileVerification
+  let replacementVerification: Anime365ProfileVerification
+
+  func signIn(email: String, password: String) -> AccessToken { signInToken }
+
+  func profile(using token: AccessToken) throws -> Anime365ProfileVerification {
+    token == existingToken ? existingVerification : replacementVerification
   }
 }
 
