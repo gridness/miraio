@@ -16,7 +16,11 @@ struct MiraioApp: App {
 
   var body: some Scene {
     WindowGroup {
-      MiraioRootView(model: composition.catalogueModel, artwork: composition.artwork)
+      MiraioRootView(
+        model: composition.catalogueModel,
+        authentication: composition.authenticationModel,
+        artwork: composition.artwork
+      )
         .task(id: scenePhase) {
           await composition.scenePhaseChanged(to: scenePhase)
           if scenePhase == .active {

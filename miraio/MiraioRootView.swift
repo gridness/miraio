@@ -26,6 +26,7 @@ private struct ArtworkPrefetchTaskID: Hashable {
 
 struct MiraioRootView: View {
   @Bindable var model: CatalogueViewModel
+  @Bindable var authentication: AuthenticationViewModel
   let artwork: any ArtworkLoading
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -76,6 +77,10 @@ struct MiraioRootView: View {
     .foregroundStyle(.white)
     .tint(.indigo)
     .animation(reduceMotion ? nil : .snappy(duration: 0.24), value: model.selectedSeriesID)
+    .task { await authentication.observe() }
+    .sheet(isPresented: $authentication.isSignInPresented) {
+      Anime365SignInView(authentication: authentication)
+    }
   }
 
   private var sourceList: some View {
@@ -97,16 +102,8 @@ struct MiraioRootView: View {
 
       Spacer()
 
-      VStack(alignment: .leading, spacing: 5) {
-        Text("PUBLIC DISCOVERY")
-          .font(.caption2.weight(.bold))
-          .tracking(1.2)
-          .foregroundStyle(.white.opacity(0.55))
-        Text("Anime365 Catalogue")
-          .font(.caption)
-          .foregroundStyle(.white.opacity(0.72))
-      }
-      .padding(14)
+      AuthenticationControl(authentication: authentication)
+        .padding(.horizontal, 10)
     }
     .padding(.vertical, 16)
   }
@@ -132,6 +129,198 @@ struct MiraioRootView: View {
     .buttonStyle(.plain)
     .padding(.horizontal, 8)
     .accessibilityIdentifier("source.\(destination.rawValue)")
+  }
+}
+
+private struct AuthenticationControl: View {
+  @Bindable var authentication: AuthenticationViewModel
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 9) {
+      Text("ANIME365 PROFILE")
+        .font(.caption2.weight(.bold))
+        .tracking(1.2)
+        .foregroundStyle(.white.opacity(0.55))
+
+      switch authentication.state {
+      case .signedOut:
+        Label("Signed Out", systemImage: "person.crop.circle.badge.xmark")
+          .font(.caption)
+        Button("Sign In", systemImage: "person.crop.circle.badge.checkmark") {
+          authentication.presentSignIn()
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(authentication.isPerformingAction)
+        .accessibilityIdentifier("authentication.sign-in")
+
+      case .credentialUnavailable:
+        Label("Credentials Unavailable", systemImage: "key.slash")
+          .font(.caption.weight(.semibold))
+          .accessibilityIdentifier("authentication.state.credential-unavailable")
+        Text("Protected playback is disabled. Public features remain available.")
+          .font(.caption2)
+          .foregroundStyle(.white.opacity(0.66))
+        Button("Retry Access", systemImage: "arrow.clockwise") {
+          Task { await authentication.retryCredentialAccess() }
+        }
+        .disabled(authentication.isPerformingAction)
+        Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right") {
+          Task { await authentication.signOut() }
+        }
+        .disabled(authentication.isPerformingAction)
+        .accessibilityIdentifier("authentication.sign-out")
+
+      case .verifying:
+        ProgressView("Verifying Profile…")
+          .font(.caption)
+          .accessibilityIdentifier("authentication.state.verifying")
+        Text("Protected playback waits for Profile verification. Public features remain available.")
+          .font(.caption2)
+          .foregroundStyle(.white.opacity(0.66))
+          .fixedSize(horizontal: false, vertical: true)
+        Button("Retry Verification", systemImage: "arrow.clockwise") {
+          Task { await authentication.refreshEligibility() }
+        }
+        .disabled(authentication.isPerformingAction)
+        .accessibilityIdentifier("authentication.retry-verification")
+        Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right") {
+          Task { await authentication.signOut() }
+        }
+        .disabled(authentication.isPerformingAction)
+        .accessibilityIdentifier("authentication.sign-out")
+
+      case .authenticatedProfile(let profile, let eligibility):
+        profileLabel(profile)
+        if eligibility == .inactive {
+          Label("Subscription Inactive", systemImage: "play.slash")
+            .font(.caption.weight(.semibold))
+            .accessibilityIdentifier("authentication.state.inactive")
+        } else {
+          Label("Subscription Unverified", systemImage: "questionmark.circle")
+            .font(.caption.weight(.semibold))
+            .accessibilityIdentifier("authentication.state.unknown")
+        }
+        Button("Refresh", systemImage: "arrow.clockwise") {
+          Task { await authentication.refreshEligibility() }
+        }
+        .disabled(authentication.isPerformingAction)
+        Link("Open Anime365", destination: Anime365WebsiteHandoff.subscription)
+          .font(.caption)
+        Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right") {
+          Task { await authentication.signOut() }
+        }
+        .disabled(authentication.isPerformingAction)
+        .accessibilityIdentifier("authentication.sign-out")
+
+      case .subscriber(let profile):
+        profileLabel(profile)
+        Label("Subscription Active", systemImage: "checkmark.seal.fill")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.green)
+          .accessibilityIdentifier("authentication.state.subscriber")
+        Button("Refresh", systemImage: "arrow.clockwise") {
+          Task { await authentication.refreshEligibility() }
+        }
+        .disabled(authentication.isPerformingAction)
+        Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right") {
+          Task { await authentication.signOut() }
+        }
+        .disabled(authentication.isPerformingAction)
+        .accessibilityIdentifier("authentication.sign-out")
+
+      case .incompleteSignOut:
+        Label("Sign-out Incomplete", systemImage: "exclamationmark.shield")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.orange)
+          .accessibilityIdentifier("authentication.state.incomplete-sign-out")
+        Text("Protected access is disabled, but the Access Token still needs deletion.")
+          .font(.caption2)
+          .foregroundStyle(.white.opacity(0.66))
+          .fixedSize(horizontal: false, vertical: true)
+        Button("Retry Sign Out", systemImage: "arrow.clockwise") {
+          Task { await authentication.retryIncompleteSignOut() }
+        }
+        .disabled(authentication.isPerformingAction)
+      }
+    }
+    .padding(10)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+  }
+
+  private func profileLabel(_ profile: Anime365Profile) -> some View {
+    Label {
+      if let displayName = profile.displayName {
+        Text(verbatim: displayName)
+      } else {
+        Text("Anime365 Profile")
+      }
+    } icon: {
+      Image(systemName: "person.crop.circle")
+    }
+    .font(.caption)
+  }
+}
+
+private struct Anime365SignInView: View {
+  @Bindable var authentication: AuthenticationViewModel
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 18) {
+      HStack {
+        VStack(alignment: .leading, spacing: 5) {
+          Text("Sign In to Anime365")
+            .font(.title2.weight(.semibold))
+          Text("Miraio exchanges these details for an Access Token. Your email and password are not saved.")
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        Spacer()
+        Button("Cancel") {
+          authentication.dismissSignIn()
+          dismiss()
+        }
+        .keyboardShortcut(.cancelAction)
+      }
+
+      TextField("Email", text: $authentication.email)
+        .textContentType(.emailAddress)
+        .accessibilityIdentifier("authentication.email")
+      SecureField("Password", text: $authentication.password)
+        .textContentType(.password)
+        .accessibilityIdentifier("authentication.password")
+
+      if let notice = authentication.notice {
+        Text(notice.message)
+          .font(.callout)
+          .foregroundStyle(.orange)
+          .fixedSize(horizontal: false, vertical: true)
+          .accessibilityAddTraits(.isStaticText)
+      }
+
+      HStack {
+        Spacer()
+        Button("Sign In") {
+          Task { await authentication.submitSignIn() }
+        }
+        .keyboardShortcut(.defaultAction)
+        .buttonStyle(.borderedProminent)
+        .disabled(
+          authentication.email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || authentication.password.isEmpty
+            || authentication.isPerformingAction
+        )
+        .accessibilityIdentifier("authentication.submit")
+      }
+    }
+    .padding(26)
+    .frame(width: 480)
+    .interactiveDismissDisabled(authentication.isPerformingAction)
+    .onDisappear {
+      authentication.email = ""
+      authentication.password = ""
+    }
   }
 }
 

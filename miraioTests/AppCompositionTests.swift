@@ -26,6 +26,18 @@ struct AppCompositionTests {
     #expect(await authority.currentState == .settled(.signOutRequested, generation: 4))
   }
 
+  @Test("the permitted Anime365 handoff carries no Access Token or app-held state")
+  func keepsWebsiteHandoffPublic() {
+    let url = Anime365WebsiteHandoff.subscription
+
+    #expect(url.scheme == "https")
+    #expect(url.host == "smotret-anime.org")
+    #expect(url.user == nil)
+    #expect(url.password == nil)
+    #expect(url.query == nil)
+    #expect(url.fragment == nil)
+  }
+
   @Test("artwork prefetch tracks exactly one viewport beyond visible Series")
   func derivesNextArtworkViewport() throws {
     let series = try (1...10).map { rawValue in
