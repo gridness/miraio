@@ -54,6 +54,8 @@ final class MiraioLaunchTests: XCTestCase {
     XCTAssertTrue(app.staticTexts["Каталог"].waitForExistence(timeout: 5))
     app.buttons["source.search"].click()
     XCTAssertTrue(app.staticTexts["Найти сериал"].waitForExistence(timeout: 2))
+    app.buttons["authentication.sign-in"].click()
+    XCTAssertTrue(app.staticTexts["Войти в Anime365"].waitForExistence(timeout: 2))
 
     let evidence = XCTAttachment(screenshot: app.screenshot())
     evidence.name = "UX-01 Russian Search destination"
@@ -88,6 +90,92 @@ final class MiraioLaunchTests: XCTestCase {
     evidence.name = "CAT-06 Series inspector context"
     evidence.lifetime = .keepAlways
     add(evidence)
+  }
+
+  @MainActor
+  func testRejectedSignInClearsPasswordAndPreservesPublicDestinations() throws {
+    let app = makeApplication()
+    app.launchEnvironment["MIRAIO_UI_AUTH_STATE"] = "signed-out"
+    app.launch()
+
+    let signIn = app.buttons["authentication.sign-in"]
+    XCTAssertTrue(signIn.waitForExistence(timeout: 5))
+    signIn.click()
+    let email = app.textFields["authentication.email"]
+    let password = app.secureTextFields["authentication.password"]
+    XCTAssertTrue(email.waitForExistence(timeout: 2))
+    email.click()
+    email.typeText("rejected@example.com")
+    password.click()
+    password.typeText("transient-password")
+    app.buttons["authentication.submit"].click()
+
+    XCTAssertTrue(
+      app.staticTexts["Anime365 did not accept these sign-in details."]
+        .waitForExistence(timeout: 2)
+    )
+    XCTAssertEqual(password.value as? String, "")
+    XCTAssertTrue(app.buttons["source.catalogue"].isEnabled)
+    XCTAssertTrue(app.buttons["source.watchHistory"].isEnabled)
+
+    app.buttons["Cancel"].click()
+    signIn.click()
+    XCTAssertEqual(app.textFields["authentication.email"].value as? String, "")
+    XCTAssertEqual(app.secureTextFields["authentication.password"].value as? String, "")
+  }
+
+  @MainActor
+  func testCredentialUnavailableAndIncompleteSignOutRemainDistinct() throws {
+    let unavailable = makeApplication()
+    unavailable.launchEnvironment["MIRAIO_UI_AUTH_STATE"] = "credential-unavailable"
+    unavailable.launch()
+    XCTAssertTrue(
+      unavailable.otherElements["authentication.state.credential-unavailable"]
+        .waitForExistence(timeout: 5)
+        || unavailable.staticTexts["authentication.state.credential-unavailable"]
+          .waitForExistence(timeout: 1)
+    )
+    XCTAssertTrue(unavailable.buttons["source.catalogue"].isEnabled)
+    XCTAssertTrue(unavailable.buttons["source.watchHistory"].isEnabled)
+    XCTAssertTrue(unavailable.buttons["authentication.sign-out"].isEnabled)
+    unavailable.terminate()
+
+    let incomplete = makeApplication()
+    incomplete.launchEnvironment["MIRAIO_UI_AUTH_STATE"] = "incomplete-sign-out"
+    incomplete.launch()
+    XCTAssertTrue(
+      incomplete.otherElements["authentication.state.incomplete-sign-out"]
+        .waitForExistence(timeout: 5)
+        || incomplete.staticTexts["authentication.state.incomplete-sign-out"]
+          .waitForExistence(timeout: 1)
+    )
+    XCTAssertFalse(incomplete.buttons["authentication.sign-in"].exists)
+    XCTAssertTrue(incomplete.buttons["source.catalogue"].isEnabled)
+    XCTAssertTrue(incomplete.buttons["source.watchHistory"].isEnabled)
+  }
+
+  @MainActor
+  func testVerifyingProfileAndSubscriberEligibilityStatesRemainDistinct() throws {
+    for (fixture, identifier) in [
+      ("verifying", "authentication.state.verifying"),
+      ("inactive", "authentication.state.inactive"),
+      ("subscriber", "authentication.state.subscriber"),
+    ] {
+      let app = makeApplication()
+      app.launchEnvironment["MIRAIO_UI_AUTH_STATE"] = fixture
+      app.launch()
+      XCTAssertTrue(
+        app.descendants(matching: .any)[identifier].waitForExistence(timeout: 5),
+        "Missing distinct state \(fixture)"
+      )
+      XCTAssertTrue(app.buttons["source.catalogue"].isEnabled)
+      XCTAssertTrue(app.buttons["source.watchHistory"].isEnabled)
+      if fixture == "verifying" {
+        XCTAssertTrue(app.buttons["authentication.retry-verification"].isEnabled)
+        XCTAssertTrue(app.buttons["authentication.sign-out"].isEnabled)
+      }
+      app.terminate()
+    }
   }
 
   private func makeApplication() -> XCUIApplication {

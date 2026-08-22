@@ -22,7 +22,11 @@ let package = Package(
     .target(name: "MiraioDomain"),
     .target(name: "MiraioApplication", dependencies: ["MiraioDomain"]),
     .target(name: "Anime365Client", dependencies: ["MiraioApplication", "MiraioDomain"]),
-    .target(name: "MiraioCredentials", dependencies: ["MiraioApplication", "MiraioDomain"]),
+    .target(
+      name: "MiraioCredentials",
+      dependencies: ["MiraioApplication", "MiraioDomain"],
+      linkerSettings: [.linkedFramework("Security")]
+    ),
     .target(name: "MiraioWatchHistory", dependencies: ["MiraioApplication", "MiraioDomain"]),
     .target(name: "MiraioPlayback", dependencies: ["MiraioApplication", "MiraioDomain"]),
     .target(name: "MiraioASSRenderer", dependencies: ["MiraioPlayback", "MiraioDomain"]),
@@ -36,6 +40,11 @@ let package = Package(
     .testTarget(
       name: "MiraioArtworkTests",
       dependencies: ["MiraioArtwork", "MiraioApplication"]
+    ),
+    .testTarget(
+      name: "MiraioCredentialsTests",
+      dependencies: ["MiraioCredentials", "MiraioApplication", "MiraioDomain"],
+      linkerSettings: [.linkedFramework("Security")]
     ),
   ]
 )

@@ -14,6 +14,8 @@ import SwiftUI
 final class AppComposition {
   let lifecycle: ApplicationLifecycleAuthority
   let catalogueModel: CatalogueViewModel
+  let authenticationModel: AuthenticationViewModel
+  let authentication: AuthenticationAuthority
   let artwork: any ArtworkLoading
 
   init(lifecycle: ApplicationLifecycleAuthority? = nil) {
@@ -34,13 +36,13 @@ final class AppComposition {
         remote = UITestCatalogueRemote()
       } else {
         remote = Anime365CatalogueClient(
-          userAgent: "Miraio/\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development")",
+          userAgent: Self.userAgent,
           diagnostics: diagnostics
         )
       }
     #else
       remote = Anime365CatalogueClient(
-        userAgent: "Miraio/\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development")",
+        userAgent: Self.userAgent,
         diagnostics: diagnostics
       )
     #endif
@@ -48,12 +50,54 @@ final class AppComposition {
     let artwork = ArtworkClient(
       cacheDirectoryURL: cacheRoot.appending(path: "Artwork", directoryHint: .isDirectory)
     )
+    let authenticationRemote: any Anime365AuthenticationRemote
+    let credentialVault: any AccessTokenVault
+    #if DEBUG
+      if usesUITestFixture {
+        authenticationRemote = UITestAuthenticationRemote()
+        credentialVault = UITestAccessTokenVault(
+          state: UITestAuthenticationState(
+            rawValue: ProcessInfo.processInfo.environment["MIRAIO_UI_AUTH_STATE"] ?? "signed-out"
+          ) ?? .signedOut
+        )
+      } else {
+        authenticationRemote = Anime365AuthenticationClient(
+          appIdentifier: Self.anime365AppIdentifier,
+          userAgent: Self.userAgent
+        )
+        credentialVault = KeychainAccessTokenVault()
+      }
+    #else
+      authenticationRemote = Anime365AuthenticationClient(
+        appIdentifier: Self.anime365AppIdentifier,
+        userAgent: Self.userAgent
+      )
+      credentialVault = KeychainAccessTokenVault()
+    #endif
+    let authentication = AuthenticationAuthority(
+      remote: authenticationRemote,
+      credentials: credentialVault,
+      protectedSession: EmptyProtectedSession()
+    )
 
     self.artwork = artwork
+    self.authentication = authentication
+    #if DEBUG
+      let fixtureAuthenticationState = usesUITestFixture
+        ? uiTestFixtureAuthenticationState
+        : nil
+    #else
+      let fixtureAuthenticationState: AuthenticationState? = nil
+    #endif
+    authenticationModel = AuthenticationViewModel(
+      authority: authentication,
+      fixtureState: fixtureAuthenticationState
+    )
     catalogueModel = CatalogueViewModel(discovery: discovery)
     self.lifecycle = lifecycle ?? Self.makeLiveLifecycleAuthority(
       discovery: discovery,
       artwork: artwork,
+      authentication: authentication,
       diagnostics: diagnostics
     )
   }
@@ -82,6 +126,7 @@ final class AppComposition {
   private static func makeLiveLifecycleAuthority(
     discovery: CatalogueDiscovery,
     artwork: any ArtworkLoading,
+    authentication: AuthenticationAuthority,
     diagnostics: any RedactedDiagnostics
   ) -> ApplicationLifecycleAuthority {
     ApplicationLifecycleAuthority(
@@ -90,7 +135,7 @@ final class AppComposition {
         makeAttemptID: UUID.init,
         diagnostics: diagnostics,
         lifecycle: LifecycleCapabilities(
-          revalidateSubscription: {},
+          revalidateSubscription: { await authentication.foregrounded() },
           checkpointWatchHistory: {},
           cancelNonessentialWork: {
             await discovery.cancelNonessentialWork()
@@ -101,11 +146,17 @@ final class AppComposition {
             await artwork.releaseDecodedImages()
           },
           cancelProtectedWork: {},
-          clearProtectedState: {}
+          clearProtectedState: { _ = await authentication.signOut() }
         )
       )
     )
   }
+
+  private static var userAgent: String {
+    "Miraio/\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development")"
+  }
+
+  private static let anime365AppIdentifier = "miraio"
 }
 
 #if DEBUG
@@ -181,7 +232,94 @@ final class AppComposition {
       )
     }
   }
+
+  private struct UITestAuthenticationRemote: Anime365AuthenticationRemote {
+    func signIn(email: String, password: String) async throws -> AccessToken {
+      throw AuthenticationRemoteFailure.rejectedSignIn
+    }
+
+    func profile(using token: AccessToken) async throws -> Anime365ProfileVerification {
+      throw AuthenticationRemoteFailure.unavailable
+    }
+  }
+
+  private enum UITestAuthenticationState: String {
+    case signedOut = "signed-out"
+    case credentialUnavailable = "credential-unavailable"
+    case incompleteSignOut = "incomplete-sign-out"
+    case verifying
+    case inactive
+    case subscriber
+  }
+
+  private var uiTestFixtureAuthenticationState: AuthenticationState? {
+    let value = ProcessInfo.processInfo.environment["MIRAIO_UI_AUTH_STATE"] ?? "signed-out"
+    guard let state = UITestAuthenticationState(rawValue: value),
+      let profileID = Anime365ProfileID(42)
+    else { return nil }
+    let profile = Anime365Profile(id: profileID, displayName: "Fixture Profile")
+    switch state {
+    case .verifying:
+      return .verifying
+    case .inactive:
+      return .authenticatedProfile(profile, eligibility: .inactive)
+    case .subscriber:
+      return .subscriber(profile)
+    case .signedOut, .credentialUnavailable, .incompleteSignOut:
+      return nil
+    }
+  }
+
+  private actor UITestAccessTokenVault: AccessTokenVault {
+    private var record: StoredAccessToken?
+    private let state: UITestAuthenticationState
+    private var latestGeneration: UInt64 = 0
+
+    init(state: UITestAuthenticationState) {
+      self.state = state
+    }
+
+    func load() throws -> StoredAccessToken? {
+      if state == .credentialUnavailable { throw UITestCredentialFailure.unavailable }
+      return record
+    }
+    func storePending(_ token: AccessToken, generation: UInt64) throws {
+      try accept(generation)
+      record = .pending(token)
+    }
+    func bind(
+      _ token: AccessToken,
+      to profileID: Anime365ProfileID,
+      generation: UInt64
+    ) throws {
+      try accept(generation)
+      record = .bound(token, profileID: profileID)
+    }
+    func delete(generation: UInt64) throws {
+      try accept(generation)
+      record = nil
+    }
+    func hasIncompleteSignOut() -> Bool { state == .incompleteSignOut }
+    func markIncompleteSignOut() {}
+    func clearIncompleteSignOut() {}
+
+    private func accept(_ generation: UInt64) throws {
+      guard generation >= latestGeneration else {
+        throw UITestCredentialFailure.obsoleteMutation
+      }
+      latestGeneration = generation
+    }
+  }
+
+  private enum UITestCredentialFailure: Error {
+    case unavailable
+    case obsoleteMutation
+  }
 #endif
+
+private actor EmptyProtectedSession: ProtectedSessionClearing {
+  func clearProtectedSession() async {}
+}
 
 private struct OSLogDiagnostics: RedactedDiagnostics {
   private let logger = Logger(subsystem: "com.gridness.miraio", category: "diagnostics")

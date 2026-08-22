@@ -18,4 +18,12 @@ struct RedactedDiagnosticsTests {
         == #"{"attempt_id":"AAAAAAAABBBBCCCCDDDDEEEEEEEEEEEE","category":"lifecycle","outcome":"obsolete_completion"}"#
     )
   }
+
+  @Test("Access Tokens redact their printable and debug representations")
+  func redactsAccessTokenRepresentations() throws {
+    let token = try #require(AccessToken("must-not-appear"))
+
+    #expect(String(describing: token) == "<redacted Access Token>")
+    #expect(String(reflecting: token) == "<redacted Access Token>")
+  }
 }
