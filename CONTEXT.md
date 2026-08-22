@@ -44,6 +44,18 @@ _Avoid_: Channel, rendition, version
 One continuous attempt to play an Episode using a selected Translation.
 _Avoid_: Login session, stream
 
+**Playback Compatibility Profile**:
+Miraio's versioned, empirically qualified interpretation of the open playback information Anime365 returns for a Translation. It is not an Anime365-guaranteed media contract.
+_Avoid_: Native Playback Contract, provider contract
+
+**Playback Candidate**:
+An opaque, ephemeral media location Miraio may attempt within a Playback Session after it matches the active Playback Compatibility Profile. It carries no provider-guaranteed Source or Quality meaning.
+_Avoid_: Source, rendition, stream URL
+
+**Compatibility-Qualified Path**:
+An advertised playback path whose observed behavior satisfies Miraio's release criteria. Qualification applies only to that path and does not make its behavior an Anime365 guarantee.
+_Avoid_: Contract-verified path, officially supported path
+
 **Access Token**:
 The persistent secret Anime365 issues to authorize an Anime365 Profile's protected capabilities.
 _Avoid_: Session, refresh token, password
