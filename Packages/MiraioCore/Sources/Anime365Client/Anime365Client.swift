@@ -8,19 +8,22 @@ public struct Anime365CatalogueClient: CatalogueRemote, Sendable {
   private let session: URLSession
   private let diagnostics: any RedactedDiagnostics
   private let makeAttemptID: @Sendable () -> UUID
+  private let now: @Sendable () -> Date
 
   public init(
     baseURL: URL = URL(string: "https://smotret-anime.app/api/")!,
     userAgent: String,
     session: URLSession? = nil,
     diagnostics: any RedactedDiagnostics,
-    makeAttemptID: @escaping @Sendable () -> UUID = UUID.init
+    makeAttemptID: @escaping @Sendable () -> UUID = UUID.init,
+    now: @escaping @Sendable () -> Date = Date.init
   ) {
     self.baseURL = baseURL
     self.userAgent = userAgent
     self.session = session ?? Self.makeEphemeralSession()
     self.diagnostics = diagnostics
     self.makeAttemptID = makeAttemptID
+    self.now = now
   }
 
   public func loadSeries(query: SeriesQuery, cursor: SeriesCursor?) async throws -> CataloguePage {
@@ -258,12 +261,31 @@ public struct Anime365CatalogueClient: CatalogueRemote, Sendable {
   private func failure(for code: Int, response: HTTPURLResponse) -> CatalogueFailure {
     if code == 404 { return .notFound }
     if code == 400 || code == 422 { return .invalidQuery }
-    if code == 429, let value = response.value(forHTTPHeaderField: "Retry-After"),
-      let seconds = TimeInterval(value)
+    if let value = response.value(forHTTPHeaderField: "Retry-After"),
+      let delay = retryAfterDelay(value)
     {
-      return .retryAfter(seconds: max(0, seconds))
+      return .retryAfter(seconds: delay)
     }
+    if code == 429 { return .retryAfter(seconds: 0) }
     return .serviceRejected(code: code)
+  }
+
+  private func retryAfterDelay(_ value: String) -> TimeInterval? {
+    if let seconds = TimeInterval(value) { return max(0, seconds) }
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    for format in [
+      "EEE',' dd MMM yyyy HH':'mm':'ss zzz",
+      "EEEE',' dd-MMM-yy HH':'mm':'ss zzz",
+      "EEE MMM d HH':'mm':'ss yyyy",
+    ] {
+      formatter.dateFormat = format
+      if let date = formatter.date(from: value) {
+        return max(0, date.timeIntervalSince(now()))
+      }
+    }
+    return nil
   }
 
   package static func makeEphemeralSession() -> URLSession {
@@ -272,6 +294,7 @@ public struct Anime365CatalogueClient: CatalogueRemote, Sendable {
     configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
     configuration.httpCookieAcceptPolicy = .never
     configuration.httpShouldSetCookies = false
+    configuration.urlCredentialStorage = nil
     configuration.httpMaximumConnectionsPerHost = 4
     return URLSession(configuration: configuration)
   }
@@ -386,6 +409,7 @@ private struct EpisodeDTO: Decodable {
   let episodeTitle: String?
   let episodeType: String?
   let isActive: ProviderBoolean?
+  let providedFields: Set<Episode.Field>
 
   enum CodingKeys: String, CodingKey {
     case id
@@ -401,11 +425,23 @@ private struct EpisodeDTO: Decodable {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     id = container.tolerantValue(Int.self, forKey: .id).value
     seriesID = container.tolerantValue(Int.self, forKey: .seriesID).value
-    episodeFull = container.tolerantValue(String.self, forKey: .episodeFull).value
-    episodeInt = container.tolerantValue(Int.self, forKey: .episodeInt).value
-    episodeTitle = container.tolerantValue(String.self, forKey: .episodeTitle).value
-    episodeType = container.tolerantValue(String.self, forKey: .episodeType).value
-    isActive = container.tolerantValue(ProviderBoolean.self, forKey: .isActive).value
+    let fullLabelField = container.tolerantValue(String.self, forKey: .episodeFull)
+    let numberField = container.tolerantValue(Int.self, forKey: .episodeInt)
+    let titleField = container.tolerantValue(String.self, forKey: .episodeTitle)
+    let typeField = container.tolerantValue(String.self, forKey: .episodeType)
+    let isActiveField = container.tolerantValue(ProviderBoolean.self, forKey: .isActive)
+    episodeFull = fullLabelField.value
+    episodeInt = numberField.value
+    episodeTitle = titleField.value
+    episodeType = typeField.value
+    isActive = isActiveField.value
+    providedFields = Set([
+      fullLabelField.isProvided ? .fullLabel : nil,
+      numberField.isProvided ? .number : nil,
+      titleField.isProvided ? .title : nil,
+      typeField.isProvided ? .type : nil,
+      isActiveField.isProvided ? .isActive : nil,
+    ].compactMap(\.self))
   }
 
   func map(expectedSeriesID: SeriesID) -> Episode? {
@@ -419,7 +455,8 @@ private struct EpisodeDTO: Decodable {
       number: episodeInt,
       title: episodeTitle,
       type: episodeType,
-      isActive: isActive?.value
+      isActive: isActive?.value,
+      providedFields: providedFields
     )
   }
 }
@@ -434,6 +471,7 @@ private struct TranslationDTO: Decodable {
   let typeLang: String?
   let qualityType: String?
   let isActive: ProviderBoolean?
+  let providedFields: Set<Translation.Field>
 
   enum CodingKeys: String, CodingKey {
     case id
@@ -452,12 +490,26 @@ private struct TranslationDTO: Decodable {
     id = container.tolerantValue(Int.self, forKey: .id).value
     seriesID = container.tolerantValue(Int.self, forKey: .seriesID).value
     episodeID = container.tolerantValue(Int.self, forKey: .episodeID).value
-    authorsSummary = container.tolerantValue(String.self, forKey: .authorsSummary).value
-    type = container.tolerantValue(String.self, forKey: .type).value
-    typeKind = container.tolerantValue(String.self, forKey: .typeKind).value
-    typeLang = container.tolerantValue(String.self, forKey: .typeLang).value
-    qualityType = container.tolerantValue(String.self, forKey: .qualityType).value
-    isActive = container.tolerantValue(ProviderBoolean.self, forKey: .isActive).value
+    let authorsField = container.tolerantValue(String.self, forKey: .authorsSummary)
+    let typeField = container.tolerantValue(String.self, forKey: .type)
+    let kindField = container.tolerantValue(String.self, forKey: .typeKind)
+    let languageField = container.tolerantValue(String.self, forKey: .typeLang)
+    let qualityField = container.tolerantValue(String.self, forKey: .qualityType)
+    let isActiveField = container.tolerantValue(ProviderBoolean.self, forKey: .isActive)
+    authorsSummary = authorsField.value
+    type = typeField.value
+    typeKind = kindField.value
+    typeLang = languageField.value
+    qualityType = qualityField.value
+    isActive = isActiveField.value
+    providedFields = Set([
+      authorsField.isProvided ? .authors : nil,
+      typeField.isProvided ? .type : nil,
+      kindField.isProvided ? .kind : nil,
+      languageField.isProvided ? .language : nil,
+      qualityField.isProvided ? .quality : nil,
+      isActiveField.isProvided ? .isActive : nil,
+    ].compactMap(\.self))
   }
 
   func map(expectedSeriesID: SeriesID) -> Translation? {
@@ -474,7 +526,8 @@ private struct TranslationDTO: Decodable {
       kind: typeKind,
       language: typeLang,
       quality: qualityType,
-      isActive: isActive?.value
+      isActive: isActive?.value,
+      providedFields: providedFields
     )
   }
 }

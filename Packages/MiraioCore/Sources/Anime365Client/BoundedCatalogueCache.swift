@@ -28,7 +28,7 @@ public actor BoundedCatalogueCache: CatalogueCache {
     let snapshot: CatalogueDetailsSnapshot
   }
 
-  private static let formatVersion = 1
+  private static let formatVersion = 2
 
   private let directoryURL: URL
   private let memoryCapacity: Int

@@ -15,7 +15,61 @@ struct Anime365CatalogueClientTests {
     #expect(configuration.requestCachePolicy == .reloadIgnoringLocalCacheData)
     #expect(configuration.httpCookieAcceptPolicy == .never)
     #expect(configuration.httpShouldSetCookies == false)
+    #expect(configuration.urlCredentialStorage == nil)
     #expect(configuration.httpMaximumConnectionsPerHost == 4)
+  }
+
+  @Test("Retry-After accepts an HTTP date and 429 remains transient without one")
+  func mapsRetryAfterResponses() async throws {
+    let now = Date(timeIntervalSince1970: 2_000_000_000)
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss zzz"
+    let retryDate = formatter.string(from: now.addingTimeInterval(120))
+    let query = try #require(SeriesQuery(pageSize: 50))
+    let datedClient = Anime365CatalogueClient(
+      baseURL: try #require(URL(string: "https://example.test/api/")),
+      userAgent: "MiraioTests/1",
+      session: makeStubbedSession(
+        statusCode: 503,
+        body: #"{"error":{"code":503}}"#,
+        headers: ["Retry-After": retryDate]
+      ),
+      diagnostics: CatalogueDiagnosticRecorder(),
+      now: { now }
+    )
+
+    await #expect(throws: CatalogueFailure.retryAfter(seconds: 120)) {
+      try await datedClient.loadSeries(query: query, cursor: nil)
+    }
+
+    let numericClient = Anime365CatalogueClient(
+      baseURL: try #require(URL(string: "https://example.test/api/")),
+      userAgent: "MiraioTests/1",
+      session: makeStubbedSession(
+        statusCode: 429,
+        body: #"{"error":{"code":429}}"#,
+        headers: ["Retry-After": "3.5"]
+      ),
+      diagnostics: CatalogueDiagnosticRecorder()
+    )
+    await #expect(throws: CatalogueFailure.retryAfter(seconds: 3.5)) {
+      try await numericClient.loadSeries(query: query, cursor: nil)
+    }
+
+    let rateLimitedClient = Anime365CatalogueClient(
+      baseURL: try #require(URL(string: "https://example.test/api/")),
+      userAgent: "MiraioTests/1",
+      session: makeStubbedSession(
+        statusCode: 429,
+        body: #"{"error":{"code":429}}"#
+      ),
+      diagnostics: CatalogueDiagnosticRecorder()
+    )
+    await #expect(throws: CatalogueFailure.retryAfter(seconds: 0)) {
+      try await rateLimitedClient.loadSeries(query: query, cursor: nil)
+    }
   }
 
   @Test("malformed identities are skipped while valid siblings and documented fields survive")
@@ -243,15 +297,21 @@ private actor CatalogueDiagnosticRecorder: RedactedDiagnostics {
   }
 }
 
-private func makeStubbedSession(statusCode: Int, body: String) -> URLSession {
-  makeStubbedSession { _ in (statusCode, body) }
+private func makeStubbedSession(
+  statusCode: Int,
+  body: String,
+  headers: [String: String] = [:]
+) -> URLSession {
+  makeStubbedSession(headers: headers) { _ in (statusCode, body) }
 }
 
 private func makeStubbedSession(
+  headers: [String: String] = [:],
   handler: @escaping @Sendable (URLRequest) throws -> (statusCode: Int, body: String)
 ) -> URLSession {
   URLProtocolStub.handler = handler
   URLProtocolStub.lastRequest = nil
+  URLProtocolStub.responseHeaders = headers
   let configuration = URLSessionConfiguration.ephemeral
   configuration.protocolClasses = [URLProtocolStub.self]
   return URLSession(configuration: configuration)
@@ -260,6 +320,7 @@ private func makeStubbedSession(
 private final class URLProtocolStub: URLProtocol, @unchecked Sendable {
   nonisolated(unsafe) static var handler: (@Sendable (URLRequest) throws -> (Int, String))!
   nonisolated(unsafe) static var lastRequest: URLRequest?
+  nonisolated(unsafe) static var responseHeaders: [String: String]?
 
   override class func canInit(with request: URLRequest) -> Bool { true }
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -268,11 +329,13 @@ private final class URLProtocolStub: URLProtocol, @unchecked Sendable {
     Self.lastRequest = request
     do {
       let result = try Self.handler(request)
+      var headers = Self.responseHeaders ?? [:]
+      headers["Content-Type"] = "application/json"
       let response = HTTPURLResponse(
         url: request.url!,
         statusCode: result.0,
         httpVersion: nil,
-        headerFields: ["Content-Type": "application/json"]
+        headerFields: headers
       )!
       client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
       client?.urlProtocol(self, didLoad: Data(result.1.utf8))

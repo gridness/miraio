@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import Testing
 
 import MiraioApplication
@@ -18,7 +19,21 @@ struct ArtworkClientTests {
     #expect(configuration.urlCache?.diskCapacity == 512 * 1_024 * 1_024)
     #expect(configuration.httpCookieAcceptPolicy == .never)
     #expect(configuration.httpShouldSetCookies == false)
+    #expect(configuration.urlCredentialStorage == nil)
     #expect(configuration.httpMaximumConnectionsPerHost == 4)
+  }
+
+  @Test("alternative private address forms are rejected before transport")
+  func rejectsAlternativePrivateAddressForms() throws {
+    let privateLocations = try [
+      "https://localhost./poster.png",
+      "https://127.1/poster.png",
+      "https://2130706433/poster.png",
+      "https://[::ffff:127.0.0.1]/poster.png",
+    ].map { try #require(URL(string: $0)) }
+
+    #expect(privateLocations.allSatisfy { !ArtworkLocationPolicy.hasAllowedSyntax($0) })
+    #expect(!ArtworkLocationPolicy.resolvesOnlyToPublicAddresses("127.0.0.1"))
   }
 
   @Test("non-HTTPS and credential-bearing locations are rejected before transport")
@@ -116,6 +131,65 @@ struct ArtworkClientTests {
     for load in loads { _ = try await load.value }
   }
 
+  @Test("distinct artwork decodes never exceed two concurrent operations")
+  func boundsConcurrentDecodes() async throws {
+    let firstURL = try #require(URL(string: "https://images.example.test/0.png"))
+    let transport = StaticArtworkTransport(
+      response: ArtworkResponse(data: Data([0]), mimeType: "image/png", finalURL: firstURL)
+    )
+    let decoder = BlockingArtworkDecoder(image: try onePixelArtworkImage())
+    let client = ArtworkClient(transport: transport, decoder: decoder)
+    let requests = try (0..<3).map { index in
+      try #require(
+        ArtworkRequest(
+          url: URL(string: "https://images.example.test/\(index).png")!,
+          pixelWidth: 300,
+          pixelHeight: 450,
+          scale: 2
+        )
+      )
+    }
+
+    let loads = requests.map { request in Task { try await client.image(for: request) } }
+    await decoder.waitUntilRequestCountIsAtLeast(2)
+    for _ in 0..<20 { await Task.yield() }
+
+    #expect(await decoder.requestCount == 2)
+    #expect(await decoder.maximumConcurrentRequestCount == 2)
+    await decoder.resumeAll()
+    await decoder.waitUntilRequestCountIsAtLeast(3)
+    await decoder.resumeAll()
+    for load in loads { _ = try await load.value }
+  }
+
+  @Test("prefetch is capped to one eight-card viewport")
+  func capsPrefetchToOneViewport() async throws {
+    let firstURL = try #require(URL(string: "https://images.example.test/0.png"))
+    let png = try #require(
+      Data(
+        base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+      )
+    )
+    let transport = StaticArtworkTransport(
+      response: ArtworkResponse(data: png, mimeType: "image/png", finalURL: firstURL)
+    )
+    let client = ArtworkClient(transport: transport)
+    let requests = try (0..<12).map { index in
+      try #require(
+        ArtworkRequest(
+          url: URL(string: "https://images.example.test/\(index).png")!,
+          pixelWidth: 180,
+          pixelHeight: 250,
+          scale: 2
+        )
+      )
+    }
+
+    await client.prefetchOneViewport(requests)
+
+    #expect(await transport.requestCount == 8)
+  }
+
   @Test("a redirect result that resolves to a private address is rejected")
   func rejectsPrivateRedirectResult() async throws {
     let requestedURL = try #require(URL(string: "https://images.example.test/poster.png"))
@@ -152,6 +226,27 @@ struct ArtworkClientTests {
     _ = try? await loading.value
   }
 
+  @Test("abandoning the only caller also cancels in-progress decode work")
+  func cancelsAbandonedArtworkDecode() async throws {
+    let url = try #require(URL(string: "https://images.example.test/poster.png"))
+    let transport = StaticArtworkTransport(
+      response: ArtworkResponse(data: Data([0]), mimeType: "image/png", finalURL: url)
+    )
+    let decoder = CancellationAwareArtworkDecoder()
+    let client = ArtworkClient(transport: transport, decoder: decoder)
+    let request = try #require(
+      ArtworkRequest(url: url, pixelWidth: 300, pixelHeight: 450, scale: 2)
+    )
+
+    let loading = Task { try await client.image(for: request) }
+    await decoder.waitUntilRequested()
+    loading.cancel()
+    for _ in 0..<30 { await Task.yield() }
+
+    #expect(await decoder.wasCancelled)
+    _ = try? await loading.value
+  }
+
   @Test("an oversized artwork body is rejected before decode")
   func rejectsOversizedArtworkBody() async throws {
     let url = try #require(URL(string: "https://images.example.test/poster.png"))
@@ -169,6 +264,14 @@ struct ArtworkClientTests {
 
     await #expect(throws: ArtworkFailure.oversizedDownload) {
       try await client.image(for: request)
+    }
+  }
+
+  @Test("source image dimensions are capped at 40 megapixels")
+  func capsSourceImageDimensions() throws {
+    try ArtworkClient.validatePixelDimensions(width: 8_000, height: 5_000)
+    #expect(throws: ArtworkFailure.oversizedImage) {
+      try ArtworkClient.validatePixelDimensions(width: 8_001, height: 5_000)
     }
   }
 }
@@ -275,4 +378,78 @@ private actor StaticArtworkTransport: ArtworkTransport {
     return response
   }
   func cancelAll() {}
+}
+
+private actor BlockingArtworkDecoder: ArtworkDecoding {
+  private(set) var requestCount = 0
+  private(set) var maximumConcurrentRequestCount = 0
+  private var concurrentRequestCount = 0
+  private let image: ArtworkImage
+  private var observers: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+  private var continuations: [CheckedContinuation<ArtworkImage, any Error>] = []
+
+  init(image: ArtworkImage) {
+    self.image = image
+  }
+
+  func decode(_ data: Data, for request: ArtworkRequest) async throws -> ArtworkImage {
+    requestCount += 1
+    concurrentRequestCount += 1
+    maximumConcurrentRequestCount = max(maximumConcurrentRequestCount, concurrentRequestCount)
+    let satisfied = observers.filter { requestCount >= $0.count }
+    observers.removeAll { requestCount >= $0.count }
+    for observer in satisfied { observer.continuation.resume() }
+    let image = try await withCheckedThrowingContinuation { continuation in
+      continuations.append(continuation)
+    }
+    concurrentRequestCount -= 1
+    return image
+  }
+
+  func waitUntilRequestCountIsAtLeast(_ count: Int) async {
+    guard requestCount < count else { return }
+    await withCheckedContinuation { continuation in
+      observers.append((count, continuation))
+    }
+  }
+
+  func resumeAll() {
+    let pending = continuations
+    continuations.removeAll()
+    for continuation in pending { continuation.resume(returning: image) }
+  }
+}
+
+private actor CancellationAwareArtworkDecoder: ArtworkDecoding {
+  private(set) var wasCancelled = false
+  private var observer: CheckedContinuation<Void, Never>?
+  private var didStart = false
+
+  func decode(_ data: Data, for request: ArtworkRequest) async throws -> ArtworkImage {
+    didStart = true
+    observer?.resume()
+    observer = nil
+    do {
+      try await Task.sleep(for: .seconds(60))
+      throw ArtworkFailure.malformedImage
+    } catch is CancellationError {
+      wasCancelled = true
+      throw ArtworkFailure.cancelled
+    }
+  }
+
+  func waitUntilRequested() async {
+    guard !didStart else { return }
+    await withCheckedContinuation { continuation in observer = continuation }
+  }
+}
+
+private func onePixelArtworkImage() throws -> ArtworkImage {
+  let png = try #require(
+    Data(
+      base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+  )
+  let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
+  return ArtworkImage(cgImage: try #require(CGImageSourceCreateImageAtIndex(source, 0, nil)))
 }

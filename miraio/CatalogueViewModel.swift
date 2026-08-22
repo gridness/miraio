@@ -152,7 +152,7 @@ final class CatalogueViewModel {
 
     let operationID = UUID()
     let discovery = self.discovery
-    let task = Task { try await discovery.details(for: series.id) }
+    let task = Task { try await discovery.details(for: series) }
     inspectorOperation = (operationID, task)
     defer {
       if inspectorOperation?.id == operationID {

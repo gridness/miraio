@@ -1,3 +1,4 @@
+import MiraioApplication
 import SwiftUI
 
 @main
@@ -19,7 +20,7 @@ struct MiraioApp: App {
         .task(id: scenePhase) {
           await composition.scenePhaseChanged(to: scenePhase)
           if scenePhase == .active {
-            await composition.catalogueModel.loadCatalogue()
+            await composition.catalogueModel.loadCatalogue(intent: .networkRecovery)
           }
         }
     }

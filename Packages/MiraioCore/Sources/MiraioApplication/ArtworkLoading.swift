@@ -40,3 +40,15 @@ public protocol ArtworkLoading: Sendable {
   func cancelNonessentialWork() async
   func releaseDecodedImages() async
 }
+
+extension ArtworkLoading {
+  public func prefetchOneViewport(_ requests: [ArtworkRequest]) async {
+    await withTaskGroup(of: Void.self) { group in
+      for request in requests.prefix(8) {
+        group.addTask {
+          _ = try? await self.image(for: request)
+        }
+      }
+    }
+  }
+}

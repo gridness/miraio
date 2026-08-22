@@ -160,6 +160,14 @@ public struct CataloguePage: Codable, Hashable, Sendable {
 }
 
 public struct Episode: Codable, Hashable, Sendable, Identifiable {
+  package enum Field: String, Codable, Hashable, Sendable {
+    case fullLabel
+    case number
+    case title
+    case type
+    case isActive
+  }
+
   public let id: EpisodeID
   public let seriesID: SeriesID
   public let fullLabel: String?
@@ -167,6 +175,7 @@ public struct Episode: Codable, Hashable, Sendable, Identifiable {
   public let title: String?
   public let type: String?
   public let isActive: Bool?
+  package let providedFields: Set<Field>
 
   public init(
     id: EpisodeID,
@@ -184,10 +193,59 @@ public struct Episode: Codable, Hashable, Sendable, Identifiable {
     self.title = title
     self.type = type
     self.isActive = isActive
+    providedFields = Set([
+      fullLabel == nil ? nil : .fullLabel,
+      number == nil ? nil : .number,
+      title == nil ? nil : .title,
+      type == nil ? nil : .type,
+      isActive == nil ? nil : .isActive,
+    ].compactMap(\.self))
+  }
+
+  package init(
+    id: EpisodeID,
+    seriesID: SeriesID,
+    fullLabel: String?,
+    number: Int?,
+    title: String?,
+    type: String?,
+    isActive: Bool?,
+    providedFields: Set<Field>
+  ) {
+    self.id = id
+    self.seriesID = seriesID
+    self.fullLabel = fullLabel
+    self.number = number
+    self.title = title
+    self.type = type
+    self.isActive = isActive
+    self.providedFields = providedFields
+  }
+
+  package func merging(_ newer: Episode) -> Episode {
+    Episode(
+      id: id,
+      seriesID: seriesID,
+      fullLabel: newer.providedFields.contains(.fullLabel) ? newer.fullLabel : fullLabel,
+      number: newer.providedFields.contains(.number) ? newer.number : number,
+      title: newer.providedFields.contains(.title) ? newer.title : title,
+      type: newer.providedFields.contains(.type) ? newer.type : type,
+      isActive: newer.providedFields.contains(.isActive) ? newer.isActive : isActive,
+      providedFields: providedFields.union(newer.providedFields)
+    )
   }
 }
 
 public struct Translation: Codable, Hashable, Sendable, Identifiable {
+  package enum Field: String, Codable, Hashable, Sendable {
+    case authors
+    case type
+    case kind
+    case language
+    case quality
+    case isActive
+  }
+
   public let id: TranslationID
   public let seriesID: SeriesID
   public let episodeID: EpisodeID
@@ -197,6 +255,7 @@ public struct Translation: Codable, Hashable, Sendable, Identifiable {
   public let language: String?
   public let quality: String?
   public let isActive: Bool?
+  package let providedFields: Set<Field>
 
   public init(
     id: TranslationID,
@@ -218,6 +277,53 @@ public struct Translation: Codable, Hashable, Sendable, Identifiable {
     self.language = language
     self.quality = quality
     self.isActive = isActive
+    providedFields = Set([
+      authors == nil ? nil : .authors,
+      type == nil ? nil : .type,
+      kind == nil ? nil : .kind,
+      language == nil ? nil : .language,
+      quality == nil ? nil : .quality,
+      isActive == nil ? nil : .isActive,
+    ].compactMap(\.self))
+  }
+
+  package init(
+    id: TranslationID,
+    seriesID: SeriesID,
+    episodeID: EpisodeID,
+    authors: String?,
+    type: String?,
+    kind: String?,
+    language: String?,
+    quality: String?,
+    isActive: Bool?,
+    providedFields: Set<Field>
+  ) {
+    self.id = id
+    self.seriesID = seriesID
+    self.episodeID = episodeID
+    self.authors = authors
+    self.type = type
+    self.kind = kind
+    self.language = language
+    self.quality = quality
+    self.isActive = isActive
+    self.providedFields = providedFields
+  }
+
+  package func merging(_ newer: Translation) -> Translation {
+    Translation(
+      id: id,
+      seriesID: seriesID,
+      episodeID: episodeID,
+      authors: newer.providedFields.contains(.authors) ? newer.authors : authors,
+      type: newer.providedFields.contains(.type) ? newer.type : type,
+      kind: newer.providedFields.contains(.kind) ? newer.kind : kind,
+      language: newer.providedFields.contains(.language) ? newer.language : language,
+      quality: newer.providedFields.contains(.quality) ? newer.quality : quality,
+      isActive: newer.providedFields.contains(.isActive) ? newer.isActive : isActive,
+      providedFields: providedFields.union(newer.providedFields)
+    )
   }
 }
 
@@ -234,5 +340,27 @@ public struct SeriesDetails: Codable, Hashable, Sendable {
 
   public func translations(for episodeID: EpisodeID) -> [Translation] {
     translations.filter { $0.episodeID == episodeID }
+  }
+
+  package func mergingKnownFields(
+    from older: SeriesDetails?,
+    fallbackSeries: Series? = nil
+  ) -> SeriesDetails {
+    var knownSeries = fallbackSeries
+    if let older {
+      knownSeries = knownSeries?.merging(older.series) ?? older.series
+    }
+    let mergedSeries = knownSeries?.merging(series) ?? series
+    let olderEpisodes = Dictionary(older?.episodes.map { ($0.id, $0) } ?? []) {
+      first, _ in first
+    }
+    let olderTranslations = Dictionary(older?.translations.map { ($0.id, $0) } ?? []) {
+      first, _ in first
+    }
+    return SeriesDetails(
+      series: mergedSeries,
+      episodes: episodes.map { olderEpisodes[$0.id]?.merging($0) ?? $0 },
+      translations: translations.map { olderTranslations[$0.id]?.merging($0) ?? $0 }
+    )
   }
 }

@@ -1,4 +1,5 @@
 import CoreGraphics
+import Darwin
 import Foundation
 import ImageIO
 import MiraioApplication
@@ -22,6 +23,23 @@ package protocol ArtworkTransport: Sendable {
   func cancelAll() async
 }
 
+package protocol ArtworkDecoding: Sendable {
+  func decode(_ data: Data, for request: ArtworkRequest) async throws -> ArtworkImage
+}
+
+private struct ImageIOArtworkDecoder: ArtworkDecoding {
+  func decode(_ data: Data, for request: ArtworkRequest) async throws -> ArtworkImage {
+    let decodeTask = Task.detached(priority: .userInitiated) {
+      try ArtworkClient.decodeOffMain(data, request: request)
+    }
+    return try await withTaskCancellationHandler {
+      try await decodeTask.value
+    } onCancel: {
+      decodeTask.cancel()
+    }
+  }
+}
+
 public actor ArtworkClient: ArtworkLoading {
   private struct InFlightDownload: Sendable {
     let id: UUID
@@ -37,37 +55,45 @@ public actor ArtworkClient: ArtworkLoading {
 
   private struct DecodedEntry: @unchecked Sendable {
     let image: ArtworkImage
-    let cost: Int
-    var access: UInt64
+    let byteCost: Int
+    var accessSequence: UInt64
   }
 
   private static let maximumPixels = 40_000_000
   private static let decodedCapacity = 128 * 1_024 * 1_024
 
   private let transport: any ArtworkTransport
+  private let decoder: any ArtworkDecoding
   private let downloadPermits = AsyncPermitPool(limit: 4)
   private let decodePermits = AsyncPermitPool(limit: 2)
   private var downloads: [URL: InFlightDownload] = [:]
   private var decodes: [ArtworkRequest: InFlightDecode] = [:]
   private var decoded: [ArtworkRequest: DecodedEntry] = [:]
   private var decodedCost = 0
-  private var access: UInt64 = 0
+  private var accessSequence: UInt64 = 0
 
   public init(cacheDirectoryURL: URL) {
     transport = URLSessionArtworkTransport(cacheDirectoryURL: cacheDirectoryURL)
+    decoder = ImageIOArtworkDecoder()
   }
 
   package init(transport: any ArtworkTransport) {
     self.transport = transport
+    decoder = ImageIOArtworkDecoder()
+  }
+
+  package init(transport: any ArtworkTransport, decoder: any ArtworkDecoding) {
+    self.transport = transport
+    self.decoder = decoder
   }
 
   public func image(for request: ArtworkRequest) async throws -> ArtworkImage {
-    guard ArtworkLocationPolicy.isAllowed(request.url) else {
+    guard ArtworkLocationPolicy.hasAllowedSyntax(request.url) else {
       throw ArtworkFailure.insecureLocation
     }
-    access &+= 1
+    accessSequence &+= 1
     if var entry = decoded[request] {
-      entry.access = access
+      entry.accessSequence = accessSequence
       decoded[request] = entry
       return entry.image
     }
@@ -155,7 +181,7 @@ public actor ArtworkClient: ArtworkLoading {
         let response = try await inFlight.task.value
         releaseDownloadDemand(url: url, flightID: inFlight.id, demandID: demandID)
         try Task.checkCancellation()
-        guard ArtworkLocationPolicy.isAllowed(response.finalURL) else {
+        guard ArtworkLocationPolicy.hasAllowedSyntax(response.finalURL) else {
           throw ArtworkFailure.insecureLocation
         }
         guard response.data.count <= maximumArtworkDownloadBytes else {
@@ -219,17 +245,17 @@ public actor ArtworkClient: ArtworkLoading {
     for request: ArtworkRequest
   ) async throws -> ArtworkImage {
     let permits = decodePermits
+    let decoder = self.decoder
     return try await permits.withPermit {
-      try await Task.detached(priority: .userInitiated) {
-        try Self.decodeOffMain(response.data, request: request)
-      }.value
+      try await decoder.decode(response.data, for: request)
     }
   }
 
-  private nonisolated static func decodeOffMain(
+  fileprivate nonisolated static func decodeOffMain(
     _ data: Data,
     request: ArtworkRequest
   ) throws -> ArtworkImage {
+    try Task.checkCancellation()
     guard let source = CGImageSourceCreateWithData(data as CFData, nil),
       let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
       let width = properties[kCGImagePropertyPixelWidth] as? Int,
@@ -237,7 +263,8 @@ public actor ArtworkClient: ArtworkLoading {
       width > 0,
       height > 0
     else { throw ArtworkFailure.malformedImage }
-    guard width <= maximumPixels / height else { throw ArtworkFailure.oversizedImage }
+    try validatePixelDimensions(width: width, height: height)
+    try Task.checkCancellation()
 
     let options: [CFString: Any] = [
       kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -247,53 +274,129 @@ public actor ArtworkClient: ArtworkLoading {
     ]
     guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     else { throw ArtworkFailure.malformedImage }
+    try Task.checkCancellation()
     return ArtworkImage(cgImage: image)
+  }
+
+  package nonisolated static func validatePixelDimensions(
+    width: Int,
+    height: Int
+  ) throws {
+    guard width > 0, height > 0, width <= maximumPixels / height else {
+      throw ArtworkFailure.oversizedImage
+    }
   }
 
   private func insertDecoded(_ image: ArtworkImage, for request: ArtworkRequest) {
     let bytesPerRow = image.cgImage.bytesPerRow
     guard image.cgImage.height <= Self.decodedCapacity / max(1, bytesPerRow) else { return }
     let cost = bytesPerRow * image.cgImage.height
-    access &+= 1
-    if let existing = decoded[request] { decodedCost -= existing.cost }
-    decoded[request] = DecodedEntry(image: image, cost: cost, access: access)
+    accessSequence &+= 1
+    if let existing = decoded[request] { decodedCost -= existing.byteCost }
+    decoded[request] = DecodedEntry(
+      image: image,
+      byteCost: cost,
+      accessSequence: accessSequence
+    )
     decodedCost += cost
     while decodedCost > Self.decodedCapacity,
-      let oldest = decoded.min(by: { $0.value.access < $1.value.access })
+      let oldest = decoded.min(by: {
+        $0.value.accessSequence < $1.value.accessSequence
+      })
     {
-      decodedCost -= oldest.value.cost
+      decodedCost -= oldest.value.byteCost
       decoded[oldest.key] = nil
     }
   }
 
 }
 
-private enum ArtworkLocationPolicy {
-  static func isAllowed(_ url: URL) -> Bool {
+package enum ArtworkLocationPolicy {
+  package static func hasAllowedSyntax(_ url: URL) -> Bool {
     guard url.scheme?.lowercased() == "https",
       url.user == nil,
       url.password == nil,
-      let host = url.host?.lowercased(),
+      let rawHost = url.host?.lowercased(),
+      let host = normalizedHost(rawHost),
       !host.isEmpty
     else { return false }
-    return !isPrivateAddress(host)
+    guard host != "localhost", !host.hasSuffix(".localhost") else { return false }
+    return resolvedAddressSafety(for: host, flags: AI_NUMERICHOST) != false
   }
 
-  private static func isPrivateAddress(_ host: String) -> Bool {
-    if host == "localhost" || host == "::1" { return true }
-    if host.hasPrefix("fc") || host.hasPrefix("fd") || host.hasPrefix("fe8")
-      || host.hasPrefix("fe9") || host.hasPrefix("fea") || host.hasPrefix("feb")
-    {
+  package static func resolvesOnlyToPublicAddresses(_ host: String) -> Bool {
+    guard let host = normalizedHost(host.lowercased()), !host.isEmpty else { return false }
+    return resolvedAddressSafety(for: host, flags: AI_ADDRCONFIG) == true
+  }
+
+  private static func normalizedHost(_ host: String) -> String? {
+    let normalized = host.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    return normalized.isEmpty ? nil : normalized
+  }
+
+  private static func resolvedAddressSafety(for host: String, flags: Int32) -> Bool? {
+    var hints = addrinfo()
+    hints.ai_flags = flags
+    hints.ai_family = AF_UNSPEC
+    hints.ai_socktype = SOCK_STREAM
+    var result: UnsafeMutablePointer<addrinfo>?
+    guard getaddrinfo(host, nil, &hints, &result) == 0, let result else { return nil }
+    defer { freeaddrinfo(result) }
+
+    var foundAddress = false
+    var current: UnsafeMutablePointer<addrinfo>? = result
+    while let entry = current {
+      defer { current = entry.pointee.ai_next }
+      guard let address = entry.pointee.ai_addr else { continue }
+      switch entry.pointee.ai_family {
+      case AF_INET:
+        foundAddress = true
+        let ipv4 = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+          UInt32(bigEndian: $0.pointee.sin_addr.s_addr)
+        }
+        if !isPublicIPv4(ipv4) { return false }
+      case AF_INET6:
+        foundAddress = true
+        let bytes = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+          withUnsafeBytes(of: $0.pointee.sin6_addr) { Array($0) }
+        }
+        if !isPublicIPv6(bytes) { return false }
+      default:
+        continue
+      }
+    }
+    return foundAddress ? true : nil
+  }
+
+  private static func isPublicIPv4(_ address: UInt32) -> Bool {
+    let first = Int((address >> 24) & 0xff)
+    let second = Int((address >> 16) & 0xff)
+    let third = Int((address >> 8) & 0xff)
+    switch (first, second, third) {
+    case (0, _, _), (10, _, _), (127, _, _), (169, 254, _), (192, 168, _):
+      return false
+    case (100, 64...127, _), (172, 16...31, _), (198, 18...19, _):
+      return false
+    case (192, 0, _), (198, 51, 100), (203, 0, 113):
+      return false
+    case (224...255, _, _):
+      return false
+    default:
       return true
     }
-    let octets = host.split(separator: ".").compactMap { Int($0) }
-    guard octets.count == 4 else { return false }
-    switch (octets[0], octets[1]) {
-    case (0, _), (10, _), (127, _), (169, 254), (192, 168): return true
-    case (172, 16...31): return true
-    case (224...255, _): return true
-    default: return false
+  }
+
+  private static func isPublicIPv6(_ bytes: [UInt8]) -> Bool {
+    guard bytes.count == 16 else { return false }
+    if bytes.prefix(10).allSatisfy({ $0 == 0 }), bytes[10] == 0xff, bytes[11] == 0xff {
+      let ipv4 = bytes[12...15].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+      return isPublicIPv4(ipv4)
     }
+    guard (0x20...0x3f).contains(bytes[0]) else { return false }
+    if bytes[0] == 0x20, bytes[1] == 0x01, bytes[2] == 0x0d, bytes[3] == 0xb8 {
+      return false
+    }
+    return true
   }
 }
 
@@ -323,12 +426,14 @@ package actor URLSessionArtworkTransport: ArtworkTransport {
     configuration.requestCachePolicy = .useProtocolCachePolicy
     configuration.httpCookieAcceptPolicy = .never
     configuration.httpShouldSetCookies = false
+    configuration.urlCredentialStorage = nil
     configuration.httpMaximumConnectionsPerHost = 4
     return configuration
   }
 
   package func data(for url: URL) async throws -> ArtworkResponse {
     do {
+      try await validatePublicLocation(url)
       let (bytes, response) = try await session.bytes(from: url)
       guard let httpResponse = response as? HTTPURLResponse else {
         throw ArtworkFailure.transportUnavailable
@@ -336,6 +441,7 @@ package actor URLSessionArtworkTransport: ArtworkTransport {
       guard (200..<300).contains(httpResponse.statusCode) else {
         throw ArtworkFailure.serviceRejected(code: httpResponse.statusCode)
       }
+      try await validatePublicLocation(httpResponse.url ?? url)
       guard httpResponse.expectedContentLength <= maximumArtworkDownloadBytes else {
         throw ArtworkFailure.oversizedDownload
       }
@@ -370,6 +476,16 @@ package actor URLSessionArtworkTransport: ArtworkTransport {
       task.cancel()
     }
   }
+
+  private func validatePublicLocation(_ url: URL) async throws {
+    guard ArtworkLocationPolicy.hasAllowedSyntax(url), let host = url.host else {
+      throw ArtworkFailure.insecureLocation
+    }
+    let isPublic = await Task.detached(priority: .userInitiated) {
+      ArtworkLocationPolicy.resolvesOnlyToPublicAddresses(host)
+    }.value
+    guard isPublic else { throw ArtworkFailure.insecureLocation }
+  }
 }
 
 private final class ArtworkRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
@@ -392,7 +508,9 @@ private final class ArtworkRedirectDelegate: NSObject, URLSessionTaskDelegate, @
     }
     guard redirectCount <= Self.maximumRedirectCount,
       let url = request.url,
-      ArtworkLocationPolicy.isAllowed(url)
+      ArtworkLocationPolicy.hasAllowedSyntax(url),
+      let host = url.host,
+      ArtworkLocationPolicy.resolvesOnlyToPublicAddresses(host)
     else {
       completionHandler(nil)
       return

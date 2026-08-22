@@ -252,7 +252,7 @@ struct CatalogueDiscoveryTests {
     #expect(await sleepRecorder.durations == [0.2])
   }
 
-  @Test("automatic retries cool down for five minutes while explicit reload bypasses once")
+  @Test("automatic retries cool down while foreground recovery bypasses suppression once")
   func suppressesAutomaticRetryDuringCooldown() async throws {
     let now = Date(timeIntervalSince1970: 2_000_000_000)
     let query = try #require(SeriesQuery(pageSize: 50))
@@ -277,10 +277,10 @@ struct CatalogueDiscoveryTests {
     _ = await collect(await discovery.updates(for: query))
     #expect(await remote.pageRequestCount == 2)
 
-    let explicit = await collect(
-      await discovery.updates(for: query, intent: .explicitReload)
+    let recovery = await collect(
+      await discovery.updates(for: query, intent: .networkRecovery)
     )
-    #expect(explicit == [.snapshot(page, freshness: .fresh, isRefreshing: false)])
+    #expect(recovery == [.snapshot(page, freshness: .fresh, isRefreshing: false)])
     #expect(await remote.pageRequestCount == 3)
   }
 
@@ -378,6 +378,76 @@ struct CatalogueDiscoveryTests {
 
     #expect(loaded == details)
   }
+
+  @Test("partial Series details preserve known list and cached relationship fields")
+  func mergesPartialSeriesDetails() async throws {
+    let now = Date(timeIntervalSince1970: 2_000_000_000)
+    let seriesID = try #require(SeriesID(41))
+    let episodeID = try #require(EpisodeID(4101))
+    let translationID = try #require(TranslationID(9001))
+    let selectedSeries = Series(
+      id: seriesID,
+      titles: LocalizedSeriesTitles(["en": "Frieren"]),
+      posterURL: URL(string: "https://images.example.test/41.jpg")
+    )
+    let cachedDetails = SeriesDetails(
+      series: Series(id: seriesID, typeTitle: "TV Series"),
+      episodes: [
+        Episode(
+          id: episodeID,
+          seriesID: seriesID,
+          fullLabel: "Episode 1",
+          title: "The Journey's End"
+        )
+      ],
+      translations: [
+        Translation(
+          id: translationID,
+          seriesID: seriesID,
+          episodeID: episodeID,
+          authors: "AniLibria",
+          language: "ru"
+        )
+      ]
+    )
+    let refreshedDetails = SeriesDetails(
+      series: Series(id: seriesID, year: 2023),
+      episodes: [Episode(id: episodeID, seriesID: seriesID, isActive: true)],
+      translations: [
+        Translation(
+          id: translationID,
+          seriesID: seriesID,
+          episodeID: episodeID,
+          quality: "1080p"
+        )
+      ]
+    )
+    let cache = CatalogueCacheFake(
+      snapshot: nil,
+      detailsSnapshot: CatalogueDetailsSnapshot(
+        details: cachedDetails,
+        storedAt: now.addingTimeInterval(-2 * 60 * 60)
+      )
+    )
+    let discovery = CatalogueDiscovery(
+      remote: DetailCatalogueRemote(details: refreshedDetails),
+      cache: cache,
+      now: { now }
+    )
+
+    let loaded = try await discovery.details(for: selectedSeries)
+
+    #expect(loaded.series.title(preferredLanguages: ["en"]) == "Frieren")
+    #expect(loaded.series.posterURL == selectedSeries.posterURL)
+    #expect(loaded.series.typeTitle == "TV Series")
+    #expect(loaded.series.year == 2023)
+    #expect(loaded.episodes.first?.fullLabel == "Episode 1")
+    #expect(loaded.episodes.first?.title == "The Journey's End")
+    #expect(loaded.episodes.first?.isActive == true)
+    #expect(loaded.translations.first?.authors == "AniLibria")
+    #expect(loaded.translations.first?.language == "ru")
+    #expect(loaded.translations.first?.quality == "1080p")
+  }
 }
 
 private extension CatalogueUpdate {
@@ -415,6 +485,22 @@ private actor CatalogueRemoteFake: CatalogueRemote {
 
   func loadSeriesDetails(id: SeriesID) throws -> SeriesDetails {
     throw CatalogueFailure.notFound
+  }
+}
+
+private actor DetailCatalogueRemote: CatalogueRemote {
+  let details: SeriesDetails
+
+  init(details: SeriesDetails) {
+    self.details = details
+  }
+
+  func loadSeries(query: SeriesQuery, cursor: SeriesCursor?) -> CataloguePage {
+    CataloguePage(series: [], nextCursor: nil)
+  }
+
+  func loadSeriesDetails(id: SeriesID) -> SeriesDetails {
+    details
   }
 }
 

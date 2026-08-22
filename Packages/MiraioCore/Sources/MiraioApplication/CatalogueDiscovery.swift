@@ -142,20 +142,45 @@ public actor CatalogueDiscovery {
     for id: SeriesID,
     intent: CatalogueLoadIntent = .automatic
   ) async throws -> SeriesDetails {
+    try await details(for: id, knownSeries: nil, intent: intent)
+  }
+
+  public func details(
+    for series: Series,
+    intent: CatalogueLoadIntent = .automatic
+  ) async throws -> SeriesDetails {
+    try await details(for: series.id, knownSeries: series, intent: intent)
+  }
+
+  private func details(
+    for id: SeriesID,
+    knownSeries: Series?,
+    intent: CatalogueLoadIntent
+  ) async throws -> SeriesDetails {
     let cachedSnapshot = await cache.details(for: id)
     let cachedAge = cachedSnapshot.map { max(0, now().timeIntervalSince($0.storedAt)) }
     if intent == .automatic, let cachedSnapshot, let cachedAge, cachedAge <= 60 * 60 {
-      return cachedSnapshot.details
+      return cachedSnapshot.details.mergingKnownFields(
+        from: nil,
+        fallbackSeries: knownSeries
+      )
     }
 
     do {
-      let details = try await loadDetails(for: id)
+      let loadedDetails = try await loadDetails(for: id)
       try Task.checkCancellation()
+      let details = loadedDetails.mergingKnownFields(
+        from: cachedSnapshot?.details,
+        fallbackSeries: knownSeries
+      )
       await cache.store(CatalogueDetailsSnapshot(details: details, storedAt: now()), for: id)
       return details
     } catch {
       if let cachedSnapshot, let cachedAge, cachedAge <= 30 * 24 * 60 * 60 {
-        return cachedSnapshot.details
+        return cachedSnapshot.details.mergingKnownFields(
+          from: nil,
+          fallbackSeries: knownSeries
+        )
       }
       throw error
     }

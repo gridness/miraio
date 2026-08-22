@@ -116,6 +116,8 @@ private struct CatalogueDestination: View {
   @Bindable var model: CatalogueViewModel
   let artwork: any ArtworkLoading
 
+  @Environment(\.displayScale) private var displayScale
+
   var body: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 30) {
@@ -160,6 +162,18 @@ private struct CatalogueDestination: View {
         }
       }
       .padding(12)
+    }
+    .task(
+      id: artworkPrefetchWindow(in: model.catalogue, maximumCount: 8).compactMap(\.posterURL)
+    ) {
+      await artwork.prefetchOneViewport(
+        artworkRequests(
+          for: artworkPrefetchWindow(in: model.catalogue, maximumCount: 8),
+          width: 180,
+          height: 250,
+          scale: displayScale
+        )
+      )
     }
   }
 
@@ -213,6 +227,8 @@ private struct CatalogueDestination: View {
 private struct SearchDestination: View {
   @Bindable var model: CatalogueViewModel
   let artwork: any ArtworkLoading
+
+  @Environment(\.displayScale) private var displayScale
 
   var body: some View {
     ScrollView {
@@ -269,10 +285,48 @@ private struct SearchDestination: View {
       }
       .padding(22)
     }
+    .task(
+      id: artworkPrefetchWindow(in: model.searchResults, maximumCount: 6).compactMap(\.posterURL)
+    ) {
+      await artwork.prefetchOneViewport(
+        artworkRequests(
+          for: artworkPrefetchWindow(in: model.searchResults, maximumCount: 6),
+          width: 76,
+          height: 104,
+          scale: displayScale
+        )
+      )
+    }
     .task(id: model.searchText) {
       await model.search()
     }
   }
+}
+
+private func artworkRequests<S: Sequence>(
+  for series: S,
+  width: CGFloat,
+  height: CGFloat,
+  scale: CGFloat
+) -> [ArtworkRequest] where S.Element == Series {
+  series.compactMap { series in
+    guard let url = series.posterURL else { return nil }
+    return ArtworkRequest(
+      url: url,
+      pixelWidth: max(1, Int(width * scale)),
+      pixelHeight: max(1, Int(height * scale)),
+      scale: Double(scale)
+    )
+  }
+}
+
+private func artworkPrefetchWindow(
+  in series: [Series],
+  maximumCount: Int
+) -> ArraySlice<Series> {
+  guard !series.isEmpty else { return [] }
+  let pageStart = ((series.count - 1) / 50) * 50
+  return series.dropFirst(pageStart).prefix(maximumCount)
 }
 
 private struct WatchHistoryDestination: View {
