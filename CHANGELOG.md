@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/gridness/miraio/compare/v0.2.0...v0.3.0) (2026-08-22)
+
+
+### Features
+
+* implement public discovery ([#53](https://github.com/gridness/miraio/issues/53)) ([cf03604](https://github.com/gridness/miraio/commit/cf036049b1b18cc3f91ffd3eb82fc4ec350f5747))
+
 ## [0.2.0](https://github.com/gridness/miraio/compare/v0.1.0...v0.2.0) (2026-08-22)
 
 
