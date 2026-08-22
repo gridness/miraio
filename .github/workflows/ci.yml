@@ -1,0 +1,80 @@
+name: Foundation CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  foundation:
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare evidence directory
+        run: mkdir -p .artifacts
+
+      - name: Audit foundation boundaries
+        run: scripts/verify-foundation.sh | tee .artifacts/foundation-audit.txt
+
+      - name: Test shared package on macOS
+        run: swift test --package-path Packages/MiraioCore | tee .artifacts/macos-package-tests.txt
+
+      - name: Test shared package on iOS 26 Simulator
+        run: |
+          IOS_DEVICE_ID="$(xcrun simctl list devices available --json | jq -r '[.devices | to_entries[] | select(.key | contains("iOS-26-")) | .value[] | select(.name | startswith("iPhone"))][0].udid // empty')"
+          test -n "$IOS_DEVICE_ID"
+          xcodebuild \
+            -scheme MiraioCore-Package \
+            -destination "platform=iOS Simulator,id=$IOS_DEVICE_ID" \
+            -resultBundlePath "$GITHUB_WORKSPACE/.artifacts/ios-package-tests.xcresult" \
+            test
+        working-directory: Packages/MiraioCore
+
+      - name: Test macOS composition
+        run: |
+          xcodebuild \
+            -project miraio.xcodeproj \
+            -scheme Miraio-Unit \
+            -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$RUNNER_TEMP/miraio-unit" \
+            -resultBundlePath "$GITHUB_WORKSPACE/.artifacts/macos-unit-tests.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+      - name: Test macOS launch
+        run: |
+          xcodebuild \
+            -project miraio.xcodeproj \
+            -scheme Miraio \
+            -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$RUNNER_TEMP/miraio-ui" \
+            -resultBundlePath "$GITHUB_WORKSPACE/.artifacts/macos-ui-tests.xcresult" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            test
+
+      - name: Build equivalent channel configurations
+        run: |
+          BUILD_NUMBER="$(git rev-list --count origin/main)"
+          test "$BUILD_NUMBER" -gt 0
+          xcodebuild -project miraio.xcodeproj -scheme Miraio -configuration Homebrew -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/miraio-homebrew" CODE_SIGNING_ALLOWED=NO MIRAIO_BUILD_NUMBER="$BUILD_NUMBER" build
+          xcodebuild -project miraio.xcodeproj -scheme Miraio -configuration Store -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/miraio-store" CODE_SIGNING_ALLOWED=NO MIRAIO_BUILD_NUMBER="$BUILD_NUMBER" build
+          MIRAIO_BUILD_NUMBER="$BUILD_NUMBER" scripts/verify-channel-equivalence.sh | tee .artifacts/channel-audit.txt
+
+      - name: Retain acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundation-evidence
+          path: .artifacts/
+          if-no-files-found: error

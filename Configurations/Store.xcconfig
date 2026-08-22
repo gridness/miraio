@@ -1,0 +1,4 @@
+#include "Shared.xcconfig"
+
+CODE_SIGN_IDENTITY = Apple Distribution
+CODE_SIGN_STYLE = Manual

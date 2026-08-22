@@ -6,6 +6,18 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* MiraioDomain in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000101 /* MiraioDomain */; };
+		A10000000000000000000002 /* MiraioApplication in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000102 /* MiraioApplication */; };
+		A10000000000000000000003 /* Anime365Client in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000103 /* Anime365Client */; };
+		A10000000000000000000004 /* MiraioCredentials in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000104 /* MiraioCredentials */; };
+		A10000000000000000000005 /* MiraioWatchHistory in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000105 /* MiraioWatchHistory */; };
+		A10000000000000000000006 /* MiraioPlayback in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000106 /* MiraioPlayback */; };
+		A10000000000000000000007 /* MiraioASSRenderer in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000107 /* MiraioASSRenderer */; };
+		A10000000000000000000008 /* MiraioArtwork in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000108 /* MiraioArtwork */; };
+		A10000000000000000000009 /* MiraioApplication in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000109 /* MiraioApplication */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		927D147F303719810069C51D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -24,7 +36,11 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		927D146F303719810069C51D /* miraio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = miraio.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000001 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
+		A20000000000000000000002 /* Homebrew.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Homebrew.xcconfig; sourceTree = "<group>"; };
+		A20000000000000000000003 /* Store.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Store.xcconfig; sourceTree = "<group>"; };
+		A20000000000000000000004 /* Version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Version.xcconfig; sourceTree = "<group>"; };
+		927D146F303719810069C51D /* Miraio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Miraio.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		927D147E303719810069C51D /* miraioTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = miraioTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		927D1488303719810069C51D /* miraioUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = miraioUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -52,6 +68,14 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000003 /* Anime365Client in Frameworks */,
+				A10000000000000000000007 /* MiraioASSRenderer in Frameworks */,
+				A10000000000000000000002 /* MiraioApplication in Frameworks */,
+				A10000000000000000000008 /* MiraioArtwork in Frameworks */,
+				A10000000000000000000004 /* MiraioCredentials in Frameworks */,
+				A10000000000000000000001 /* MiraioDomain in Frameworks */,
+				A10000000000000000000006 /* MiraioPlayback in Frameworks */,
+				A10000000000000000000005 /* MiraioWatchHistory in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -59,6 +83,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000009 /* MiraioApplication in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -75,6 +100,7 @@
 		927D1466303719810069C51D = {
 			isa = PBXGroup;
 			children = (
+				A20000000000000000000010 /* Configurations */,
 				927D1471303719810069C51D /* miraio */,
 				927D1481303719810069C51D /* miraioTests */,
 				927D148B303719810069C51D /* miraioUITests */,
@@ -82,10 +108,21 @@
 			);
 			sourceTree = "<group>";
 		};
+		A20000000000000000000010 /* Configurations */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000001 /* Shared.xcconfig */,
+				A20000000000000000000002 /* Homebrew.xcconfig */,
+				A20000000000000000000003 /* Store.xcconfig */,
+				A20000000000000000000004 /* Version.xcconfig */,
+			);
+			path = Configurations;
+			sourceTree = "<group>";
+		};
 		927D1470303719810069C51D /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				927D146F303719810069C51D /* miraio.app */,
+				927D146F303719810069C51D /* Miraio.app */,
 				927D147E303719810069C51D /* miraioTests.xctest */,
 				927D1488303719810069C51D /* miraioUITests.xctest */,
 			);
@@ -112,9 +149,17 @@
 			);
 			name = miraio;
 			packageProductDependencies = (
+				A10000000000000000000101 /* MiraioDomain */,
+				A10000000000000000000102 /* MiraioApplication */,
+				A10000000000000000000103 /* Anime365Client */,
+				A10000000000000000000104 /* MiraioCredentials */,
+				A10000000000000000000105 /* MiraioWatchHistory */,
+				A10000000000000000000106 /* MiraioPlayback */,
+				A10000000000000000000107 /* MiraioASSRenderer */,
+				A10000000000000000000108 /* MiraioArtwork */,
 			);
 			productName = miraio;
-			productReference = 927D146F303719810069C51D /* miraio.app */;
+			productReference = 927D146F303719810069C51D /* Miraio.app */;
 			productType = "com.apple.product-type.application";
 		};
 		927D147D303719810069C51D /* miraioTests */ = {
@@ -135,6 +180,7 @@
 			);
 			name = miraioTests;
 			packageProductDependencies = (
+				A10000000000000000000109 /* MiraioApplication */,
 			);
 			productName = miraioTests;
 			productReference = 927D147E303719810069C51D /* miraioTests.xctest */;
@@ -197,6 +243,9 @@
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 927D1470303719810069C51D /* Products */;
+			packageReferences = (
+				A10000000000000000000201 /* XCLocalSwiftPackageReference "Packages/MiraioCore" */,
+			);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -385,85 +434,35 @@
 		};
 		927D1493303719810069C51D /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A20000000000000000000001 /* Shared.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
-				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
-				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
-				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
-				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
-				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
-				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
-				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gridness.miraio;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				REGISTER_APP_GROUPS = YES;
-				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
-				XROS_DEPLOYMENT_TARGET = 26.5;
 			};
 			name = Debug;
 		};
 		927D1494303719810069C51D /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A20000000000000000000001 /* Shared.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
-				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
-				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
-				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
-				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
-				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
-				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
-				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gridness.miraio;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				REGISTER_APP_GROUPS = YES;
-				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
-				XROS_DEPLOYMENT_TARGET = 26.5;
 			};
 			name = Release;
 		};
@@ -474,21 +473,18 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.gridness.miraioTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = auto;
+				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/miraio.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/miraio";
-				XROS_DEPLOYMENT_TARGET = 26.5;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Miraio.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Miraio";
 			};
 			name = Debug;
 		};
@@ -499,21 +495,18 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.gridness.miraioTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = auto;
+				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/miraio.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/miraio";
-				XROS_DEPLOYMENT_TARGET = 26.5;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Miraio.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Miraio";
 			};
 			name = Release;
 		};
@@ -523,21 +516,18 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.gridness.miraioUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = auto;
+				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
 				TEST_TARGET_NAME = miraio;
-				XROS_DEPLOYMENT_TARGET = 26.5;
 			};
 			name = Debug;
 		};
@@ -547,23 +537,82 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.gridness.miraioUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = auto;
+				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
 				TEST_TARGET_NAME = miraio;
-				XROS_DEPLOYMENT_TARGET = 26.5;
 			};
 			name = Release;
+		};
+		A20000000000000000000101 /* Homebrew */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+			};
+			name = Homebrew;
+		};
+		A20000000000000000000102 /* Store */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+			};
+			name = Store;
+		};
+		A20000000000000000000103 /* Homebrew */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A20000000000000000000002 /* Homebrew.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ENABLE_PREVIEWS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Homebrew;
+		};
+		A20000000000000000000104 /* Store */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A20000000000000000000003 /* Store.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ENABLE_PREVIEWS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Store;
 		};
 /* End XCBuildConfiguration section */
 
@@ -573,6 +622,8 @@
 			buildConfigurations = (
 				927D1490303719810069C51D /* Debug */,
 				927D1491303719810069C51D /* Release */,
+				A20000000000000000000101 /* Homebrew */,
+				A20000000000000000000102 /* Store */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -582,6 +633,8 @@
 			buildConfigurations = (
 				927D1493303719810069C51D /* Debug */,
 				927D1494303719810069C51D /* Release */,
+				A20000000000000000000103 /* Homebrew */,
+				A20000000000000000000104 /* Store */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -605,6 +658,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A10000000000000000000201 /* XCLocalSwiftPackageReference "Packages/MiraioCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/MiraioCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A10000000000000000000101 /* MiraioDomain */ = {isa = XCSwiftPackageProductDependency; productName = MiraioDomain; };
+		A10000000000000000000102 /* MiraioApplication */ = {isa = XCSwiftPackageProductDependency; productName = MiraioApplication; };
+		A10000000000000000000103 /* Anime365Client */ = {isa = XCSwiftPackageProductDependency; productName = Anime365Client; };
+		A10000000000000000000104 /* MiraioCredentials */ = {isa = XCSwiftPackageProductDependency; productName = MiraioCredentials; };
+		A10000000000000000000105 /* MiraioWatchHistory */ = {isa = XCSwiftPackageProductDependency; productName = MiraioWatchHistory; };
+		A10000000000000000000106 /* MiraioPlayback */ = {isa = XCSwiftPackageProductDependency; productName = MiraioPlayback; };
+		A10000000000000000000107 /* MiraioASSRenderer */ = {isa = XCSwiftPackageProductDependency; productName = MiraioASSRenderer; };
+		A10000000000000000000108 /* MiraioArtwork */ = {isa = XCSwiftPackageProductDependency; productName = MiraioArtwork; };
+		A10000000000000000000109 /* MiraioApplication */ = {isa = XCSwiftPackageProductDependency; productName = MiraioApplication; };
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 927D1467303719810069C51D /* Project object */;
 }
