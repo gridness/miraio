@@ -29,5 +29,13 @@ let package = Package(
     .target(name: "MiraioArtwork", dependencies: ["MiraioApplication", "MiraioDomain"]),
     .testTarget(name: "MiraioDomainTests", dependencies: ["MiraioDomain"]),
     .testTarget(name: "MiraioApplicationTests", dependencies: ["MiraioApplication"]),
+    .testTarget(
+      name: "Anime365ClientTests",
+      dependencies: ["Anime365Client", "MiraioApplication", "MiraioDomain"]
+    ),
+    .testTarget(
+      name: "MiraioArtworkTests",
+      dependencies: ["MiraioArtwork", "MiraioApplication"]
+    ),
   ]
 )

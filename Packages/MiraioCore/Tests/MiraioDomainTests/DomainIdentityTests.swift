@@ -5,20 +5,20 @@ import Testing
 
 @Suite("Opaque Anime365 identifiers")
 struct DomainIdentityTests {
-  @Test("identifiers reject empty provider values")
-  func rejectsEmptyValues() {
-    #expect(Anime365ProfileID("") == nil)
-    #expect(SeriesID("") == nil)
-    #expect(EpisodeID("") == nil)
-    #expect(TranslationID("") == nil)
+  @Test("identifiers reject non-positive provider values")
+  func rejectsNonPositiveValues() {
+    #expect(Anime365ProfileID(0) == nil)
+    #expect(SeriesID(-1) == nil)
+    #expect(EpisodeID(0) == nil)
+    #expect(TranslationID(-1) == nil)
   }
 
   @Test("identifiers preserve their provider value through Codable")
   func codableRepresentation() throws {
-    let profileID = try #require(Anime365ProfileID("profile-42"))
+    let profileID = try #require(Anime365ProfileID(42))
 
     let encoded = try JSONEncoder().encode(profileID)
-    #expect(String(decoding: encoded, as: UTF8.self) == #""profile-42""#)
+    #expect(String(decoding: encoded, as: UTF8.self) == "42")
     #expect(try JSONDecoder().decode(Anime365ProfileID.self, from: encoded) == profileID)
   }
 }

@@ -7,10 +7,15 @@ public protocol RedactedDiagnostics: Sendable {
 public struct RedactedDiagnosticEvent: Codable, Equatable, Sendable {
   public enum Category: String, Codable, Sendable {
     case lifecycle
+    case catalogue
+    case artwork
   }
 
   public enum Outcome: String, Codable, Sendable {
     case obsoleteCompletion = "obsolete_completion"
+    case unusableIdentity = "unusable_identity"
+    case unusableResponse = "unusable_response"
+    case rejectedLocation = "rejected_location"
   }
 
   public let attemptID: UUID
