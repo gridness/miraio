@@ -39,7 +39,11 @@ public enum CatalogueFreshness: String, Codable, Hashable, Sendable {
 
 public enum CatalogueUpdate: Equatable, Sendable {
   case snapshot(CataloguePage, freshness: CatalogueFreshness, isRefreshing: Bool)
-  case staleFallback(CataloguePage, failure: CatalogueFailure)
+  case staleFallback(
+    CataloguePage,
+    freshness: CatalogueFreshness,
+    failure: CatalogueFailure
+  )
   case failed(CatalogueFailure, retained: CataloguePage?)
 }
 
@@ -62,10 +66,12 @@ public actor CatalogueDiscovery {
   private struct InFlightPage: Sendable {
     let id: UUID
     let task: Task<CataloguePage, any Error>
+    var demandIDs: Set<UUID>
   }
   private struct InFlightDetails: Sendable {
     let id: UUID
     let task: Task<SeriesDetails, any Error>
+    var demandIDs: Set<UUID>
   }
 
   private struct RetrySuppression: Sendable {
@@ -172,7 +178,7 @@ public actor CatalogueDiscovery {
         )
         if !isRefreshing { return }
       }
-      if cachedAge <= 24 * 60 * 60 {
+      if cachedAge > 60 * 60, cachedAge <= 24 * 60 * 60 {
         continuation.yield(
           .snapshot(
             cachedSnapshot.page,
@@ -232,81 +238,145 @@ public actor CatalogueDiscovery {
   }
 
   private func loadPage(for request: CataloguePageRequest) async throws -> CataloguePage {
-    if let inFlight = inFlightPages[request] {
-      let page = try await inFlight.task.value
-      try Task.checkCancellation()
-      return page
+    let demandID = UUID()
+    let inFlight: InFlightPage
+    if var existing = inFlightPages[request] {
+      existing.demandIDs.insert(demandID)
+      inFlightPages[request] = existing
+      inFlight = existing
+    } else {
+      let id = UUID()
+      let remote = self.remote
+      let remotePermits = self.remotePermits
+      let sleep = self.sleep
+      let retryJitter = self.retryJitter
+      let task = Task {
+        do {
+          return try await remotePermits.withPermit {
+            try await remote.loadSeries(query: request.query, cursor: request.cursor)
+          }
+        } catch let failure as CatalogueFailure where failure.isTransient {
+          let delay = failure.retryDelay ?? retryJitter()
+          try await sleep(delay)
+          return try await remotePermits.withPermit {
+            try await remote.loadSeries(query: request.query, cursor: request.cursor)
+          }
+        }
+      }
+      inFlight = InFlightPage(id: id, task: task, demandIDs: [demandID])
+      inFlightPages[request] = inFlight
     }
 
-    let id = UUID()
-    let remote = self.remote
-    let remotePermits = self.remotePermits
-    let sleep = self.sleep
-    let retryJitter = self.retryJitter
-    let task = Task {
+    return try await withTaskCancellationHandler {
       do {
-        return try await remotePermits.withPermit {
-          try await remote.loadSeries(query: request.query, cursor: request.cursor)
-        }
-      } catch let failure as CatalogueFailure where failure.isTransient {
-        let delay = failure.retryDelay ?? retryJitter()
-        try await sleep(delay)
-        return try await remotePermits.withPermit {
-          try await remote.loadSeries(query: request.query, cursor: request.cursor)
-        }
+        let page = try await inFlight.task.value
+        releasePageDemand(request: request, flightID: inFlight.id, demandID: demandID)
+        try Task.checkCancellation()
+        return page
+      } catch {
+        releasePageDemand(request: request, flightID: inFlight.id, demandID: demandID)
+        throw error
       }
-    }
-    inFlightPages[request] = InFlightPage(id: id, task: task)
-
-    do {
-      let page = try await task.value
-      if inFlightPages[request]?.id == id {
-        inFlightPages[request] = nil
+    } onCancel: {
+      Task {
+        await self.cancelPageDemand(
+          request: request,
+          flightID: inFlight.id,
+          demandID: demandID
+        )
       }
-      try Task.checkCancellation()
-      return page
-    } catch {
-      if inFlightPages[request]?.id == id {
-        inFlightPages[request] = nil
-      }
-      throw error
     }
   }
 
   private func loadDetails(for id: SeriesID) async throws -> SeriesDetails {
-    if let inFlight = inFlightDetails[id] {
-      let details = try await inFlight.task.value
-      try Task.checkCancellation()
-      return details
-    }
-
-    let token = UUID()
-    let remote = self.remote
-    let remotePermits = self.remotePermits
-    let sleep = self.sleep
-    let retryJitter = self.retryJitter
-    let task = Task {
-      do {
-        return try await remotePermits.withPermit {
-          try await remote.loadSeriesDetails(id: id)
-        }
-      } catch let failure as CatalogueFailure where failure.isTransient {
-        try await sleep(failure.retryDelay ?? retryJitter())
-        return try await remotePermits.withPermit {
-          try await remote.loadSeriesDetails(id: id)
+    let demandID = UUID()
+    let inFlight: InFlightDetails
+    if var existing = inFlightDetails[id] {
+      existing.demandIDs.insert(demandID)
+      inFlightDetails[id] = existing
+      inFlight = existing
+    } else {
+      let token = UUID()
+      let remote = self.remote
+      let remotePermits = self.remotePermits
+      let sleep = self.sleep
+      let retryJitter = self.retryJitter
+      let task = Task {
+        do {
+          return try await remotePermits.withPermit {
+            try await remote.loadSeriesDetails(id: id)
+          }
+        } catch let failure as CatalogueFailure where failure.isTransient {
+          try await sleep(failure.retryDelay ?? retryJitter())
+          return try await remotePermits.withPermit {
+            try await remote.loadSeriesDetails(id: id)
+          }
         }
       }
+      inFlight = InFlightDetails(id: token, task: task, demandIDs: [demandID])
+      inFlightDetails[id] = inFlight
     }
-    inFlightDetails[id] = InFlightDetails(id: token, task: task)
 
-    do {
-      let details = try await task.value
-      if inFlightDetails[id]?.id == token { inFlightDetails[id] = nil }
-      try Task.checkCancellation()
-      return details
-    } catch {
-      if inFlightDetails[id]?.id == token { inFlightDetails[id] = nil }
-      throw error
+    return try await withTaskCancellationHandler {
+      do {
+        let details = try await inFlight.task.value
+        releaseDetailsDemand(seriesID: id, flightID: inFlight.id, demandID: demandID)
+        try Task.checkCancellation()
+        return details
+      } catch {
+        releaseDetailsDemand(seriesID: id, flightID: inFlight.id, demandID: demandID)
+        throw error
+      }
+    } onCancel: {
+      Task {
+        await self.cancelDetailsDemand(
+          seriesID: id,
+          flightID: inFlight.id,
+          demandID: demandID
+        )
+      }
+    }
+  }
+
+  private func releasePageDemand(
+    request: CataloguePageRequest,
+    flightID: UUID,
+    demandID: UUID
+  ) {
+    guard var inFlight = inFlightPages[request], inFlight.id == flightID else { return }
+    inFlight.demandIDs.remove(demandID)
+    inFlightPages[request] = inFlight.demandIDs.isEmpty ? nil : inFlight
+  }
+
+  private func cancelPageDemand(
+    request: CataloguePageRequest,
+    flightID: UUID,
+    demandID: UUID
+  ) {
+    guard var inFlight = inFlightPages[request], inFlight.id == flightID else { return }
+    inFlight.demandIDs.remove(demandID)
+    if inFlight.demandIDs.isEmpty {
+      inFlightPages[request] = nil
+      inFlight.task.cancel()
+    } else {
+      inFlightPages[request] = inFlight
+    }
+  }
+
+  private func releaseDetailsDemand(seriesID: SeriesID, flightID: UUID, demandID: UUID) {
+    guard var inFlight = inFlightDetails[seriesID], inFlight.id == flightID else { return }
+    inFlight.demandIDs.remove(demandID)
+    inFlightDetails[seriesID] = inFlight.demandIDs.isEmpty ? nil : inFlight
+  }
+
+  private func cancelDetailsDemand(seriesID: SeriesID, flightID: UUID, demandID: UUID) {
+    guard var inFlight = inFlightDetails[seriesID], inFlight.id == flightID else { return }
+    inFlight.demandIDs.remove(demandID)
+    if inFlight.demandIDs.isEmpty {
+      inFlightDetails[seriesID] = nil
+      inFlight.task.cancel()
+    } else {
+      inFlightDetails[seriesID] = inFlight
     }
   }
 
@@ -317,7 +387,17 @@ public actor CatalogueDiscovery {
     into continuation: AsyncStream<CatalogueUpdate>.Continuation
   ) {
     if let cachedSnapshot, let cachedAge, cachedAge <= 30 * 24 * 60 * 60 {
-      continuation.yield(.staleFallback(cachedSnapshot.page, failure: failure))
+      let freshness: CatalogueFreshness
+      if cachedAge <= 60 * 60 {
+        freshness = .fresh
+      } else if cachedAge <= 24 * 60 * 60 {
+        freshness = .staleWhileRefreshing
+      } else {
+        freshness = .visiblyStale
+      }
+      continuation.yield(
+        .staleFallback(cachedSnapshot.page, freshness: freshness, failure: failure)
+      )
     } else {
       continuation.yield(.failed(failure, retained: nil))
     }

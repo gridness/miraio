@@ -29,4 +29,31 @@ struct CatalogueDisplayValueTests {
     #expect(series.title(preferredLanguages: ["en-US"]) == "Frieren")
     #expect(Series(id: series.id).title(preferredLanguages: ["en"]) == nil)
   }
+
+  @Test("paged Catalogue reconciliation is identity-based and preserves known fields")
+  func appendsPageByIdentity() throws {
+    let firstID = try #require(SeriesID(41))
+    let secondID = try #require(SeriesID(42))
+    let firstPage = CataloguePage(
+      series: [
+        Series(
+          id: firstID,
+          titles: LocalizedSeriesTitles(["en": "Known title"]),
+          year: 2023
+        )
+      ],
+      nextCursor: nil
+    )
+    let nextPage = CataloguePage(
+      series: [Series(id: firstID, isAiring: true), Series(id: secondID)],
+      nextCursor: nil
+    )
+
+    let combined = firstPage.appending(nextPage)
+
+    #expect(combined.series.map(\.id) == [firstID, secondID])
+    #expect(combined.series[0].title(preferredLanguages: ["en"]) == "Known title")
+    #expect(combined.series[0].year == 2023)
+    #expect(combined.series[0].isAiring == true)
+  }
 }

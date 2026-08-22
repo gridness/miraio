@@ -93,13 +93,23 @@ public struct Anime365CatalogueClient: CatalogueRemote, Sendable {
     }
 
     var series: [Series] = []
+    var indices: [SeriesID: Int] = [:]
     series.reserveCapacity(elements.count)
     for element in elements {
       guard let dto = element.value, let idValue = dto.id, let id = SeriesID(idValue) else {
         await record(.unusableIdentity)
         continue
       }
-      series.append(dto.map(id: id))
+      let mapped = dto.map(id: id)
+      if let index = indices[id] {
+        series[index] = series[index].merging(mapped)
+      } else {
+        indices[id] = series.count
+        series.append(mapped)
+      }
+    }
+    guard elements.isEmpty || !series.isEmpty else {
+      throw CatalogueFailure.unusableResponse
     }
 
     let nextCursor = elements.count == query.pageSize
@@ -157,6 +167,9 @@ public struct Anime365CatalogueClient: CatalogueRemote, Sendable {
       }
       episodes.append(episode)
     }
+    guard episodeElements.isEmpty || !episodes.isEmpty else {
+      throw CatalogueFailure.unusableResponse
+    }
 
     let translationEnvelope = try decode(TranslationEnvelope.self, from: rawTranslations.data)
     guard let translationElements = translationEnvelope.data else {
@@ -173,6 +186,9 @@ public struct Anime365CatalogueClient: CatalogueRemote, Sendable {
         continue
       }
       translations.append(translation)
+    }
+    guard translationElements.isEmpty || !translations.isEmpty else {
+      throw CatalogueFailure.unusableResponse
     }
 
     return SeriesDetails(series: series, episodes: episodes, translations: translations)
@@ -321,22 +337,29 @@ private struct SeriesDTO: Decodable {
 
   init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    id = try container.decodeIfPresent(Int.self, forKey: .id)
-    titles = try container.decodeIfPresent([String: String].self, forKey: .titles)
-    typeTitle = try container.decodeIfPresent(String.self, forKey: .typeTitle)
-    posterURLSmall = try container.decodeIfPresent(URL.self, forKey: .posterURLSmall)
-    year = try container.decodeIfPresent(Int.self, forKey: .year)
-    season = try container.decodeIfPresent(String.self, forKey: .season)
-    isAiring = try container.decodeIfPresent(ProviderBoolean.self, forKey: .isAiring)
-    isActive = try container.decodeIfPresent(ProviderBoolean.self, forKey: .isActive)
+    id = container.tolerantValue(Int.self, forKey: .id).value
+    let titlesField = container.tolerantValue([String: String].self, forKey: .titles)
+    let typeTitleField = container.tolerantValue(String.self, forKey: .typeTitle)
+    let posterURLField = container.tolerantValue(URL.self, forKey: .posterURLSmall)
+    let yearField = container.tolerantValue(Int.self, forKey: .year)
+    let seasonField = container.tolerantValue(String.self, forKey: .season)
+    let isAiringField = container.tolerantValue(ProviderBoolean.self, forKey: .isAiring)
+    let isActiveField = container.tolerantValue(ProviderBoolean.self, forKey: .isActive)
+    titles = titlesField.value
+    typeTitle = typeTitleField.value
+    posterURLSmall = posterURLField.value
+    year = yearField.value
+    season = seasonField.value
+    isAiring = isAiringField.value
+    isActive = isActiveField.value
     providedFields = Set([
-      container.contains(.titles) ? .titles : nil,
-      container.contains(.typeTitle) ? .typeTitle : nil,
-      container.contains(.posterURLSmall) ? .posterURL : nil,
-      container.contains(.year) ? .year : nil,
-      container.contains(.season) ? .season : nil,
-      container.contains(.isAiring) ? .isAiring : nil,
-      container.contains(.isActive) ? .isActive : nil,
+      titlesField.isProvided ? .titles : nil,
+      typeTitleField.isProvided ? .typeTitle : nil,
+      posterURLField.isProvided ? .posterURL : nil,
+      yearField.isProvided ? .year : nil,
+      seasonField.isProvided ? .season : nil,
+      isAiringField.isProvided ? .isAiring : nil,
+      isActiveField.isProvided ? .isActive : nil,
     ].compactMap(\.self))
   }
 
@@ -372,6 +395,17 @@ private struct EpisodeDTO: Decodable {
     case episodeTitle
     case episodeType
     case isActive
+  }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = container.tolerantValue(Int.self, forKey: .id).value
+    seriesID = container.tolerantValue(Int.self, forKey: .seriesID).value
+    episodeFull = container.tolerantValue(String.self, forKey: .episodeFull).value
+    episodeInt = container.tolerantValue(Int.self, forKey: .episodeInt).value
+    episodeTitle = container.tolerantValue(String.self, forKey: .episodeTitle).value
+    episodeType = container.tolerantValue(String.self, forKey: .episodeType).value
+    isActive = container.tolerantValue(ProviderBoolean.self, forKey: .isActive).value
   }
 
   func map(expectedSeriesID: SeriesID) -> Episode? {
@@ -413,6 +447,19 @@ private struct TranslationDTO: Decodable {
     case isActive
   }
 
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = container.tolerantValue(Int.self, forKey: .id).value
+    seriesID = container.tolerantValue(Int.self, forKey: .seriesID).value
+    episodeID = container.tolerantValue(Int.self, forKey: .episodeID).value
+    authorsSummary = container.tolerantValue(String.self, forKey: .authorsSummary).value
+    type = container.tolerantValue(String.self, forKey: .type).value
+    typeKind = container.tolerantValue(String.self, forKey: .typeKind).value
+    typeLang = container.tolerantValue(String.self, forKey: .typeLang).value
+    qualityType = container.tolerantValue(String.self, forKey: .qualityType).value
+    isActive = container.tolerantValue(ProviderBoolean.self, forKey: .isActive).value
+  }
+
   func map(expectedSeriesID: SeriesID) -> Translation? {
     guard let id, let translationID = TranslationID(id),
       let seriesID, SeriesID(seriesID) == expectedSeriesID,
@@ -442,5 +489,17 @@ private struct ProviderBoolean: Decodable {
     } else {
       self.value = try container.decode(Int.self) != 0
     }
+  }
+}
+
+private extension KeyedDecodingContainer {
+  func tolerantValue<Value: Decodable>(
+    _ type: Value.Type,
+    forKey key: Key
+  ) -> (value: Value?, isProvided: Bool) {
+    guard contains(key) else { return (nil, false) }
+    if (try? decodeNil(forKey: key)) == true { return (nil, true) }
+    guard let value = try? decode(Value.self, forKey: key) else { return (nil, false) }
+    return (value, true)
   }
 }

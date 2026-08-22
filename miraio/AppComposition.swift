@@ -18,16 +18,32 @@ final class AppComposition {
 
   init(lifecycle: ApplicationLifecycleAuthority? = nil) {
     let diagnostics = OSLogDiagnostics()
+    let usesUITestFixture = ProcessInfo.processInfo.environment["MIRAIO_UI_FIXTURE"] == "1"
     let cacheRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
       .first!
-      .appending(path: "Miraio", directoryHint: .isDirectory)
+      .appending(
+        path: usesUITestFixture ? "Miraio-UITestFixture" : "Miraio",
+        directoryHint: .isDirectory
+      )
     let catalogueCache = BoundedCatalogueCache(
       directoryURL: cacheRoot.appending(path: "Catalogue", directoryHint: .isDirectory)
     )
-    let remote = Anime365CatalogueClient(
-      userAgent: "Miraio/\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development")",
-      diagnostics: diagnostics
-    )
+    let remote: any CatalogueRemote
+    #if DEBUG
+      if usesUITestFixture {
+        remote = UITestCatalogueRemote()
+      } else {
+        remote = Anime365CatalogueClient(
+          userAgent: "Miraio/\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development")",
+          diagnostics: diagnostics
+        )
+      }
+    #else
+      remote = Anime365CatalogueClient(
+        userAgent: "Miraio/\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development")",
+        diagnostics: diagnostics
+      )
+    #endif
     let discovery = CatalogueDiscovery(remote: remote, cache: catalogueCache)
     let artwork = ArtworkClient(
       cacheDirectoryURL: cacheRoot.appending(path: "Artwork", directoryHint: .isDirectory)
@@ -91,6 +107,81 @@ final class AppComposition {
     )
   }
 }
+
+#if DEBUG
+  private actor UITestCatalogueRemote: CatalogueRemote {
+    func loadSeries(query: SeriesQuery, cursor: SeriesCursor?) throws -> CataloguePage {
+      CataloguePage(
+        series: [
+          Series(
+            id: SeriesID(41)!,
+            titles: LocalizedSeriesTitles([
+              "en": "Frieren: Beyond Journey's End",
+              "ru": "Провожающая в последний путь Фрирен",
+            ]),
+            typeTitle: "TV Series",
+            year: 2023,
+            season: "Autumn 2023",
+            isAiring: false,
+            isActive: true
+          ),
+          Series(
+            id: SeriesID(42)!,
+            titles: LocalizedSeriesTitles([
+              "en": "The Apothecary Diaries",
+              "ru": "Монолог фармацевта",
+            ]),
+            typeTitle: "TV Series",
+            year: 2023,
+            isActive: true
+          ),
+        ],
+        nextCursor: nil
+      )
+    }
+
+    func loadSeriesDetails(id: SeriesID) throws -> SeriesDetails {
+      let series = Series(
+        id: id,
+        titles: LocalizedSeriesTitles([
+          "en": id == SeriesID(41) ? "Frieren: Beyond Journey's End" : "The Apothecary Diaries",
+          "ru": id == SeriesID(41) ? "Провожающая в последний путь Фрирен" : "Монолог фармацевта",
+        ]),
+        typeTitle: "TV Series",
+        year: 2023,
+        isActive: true
+      )
+      let episodeID = EpisodeID(id.rawValue * 100 + 1)!
+      return SeriesDetails(
+        series: series,
+        episodes: [
+          Episode(
+            id: episodeID,
+            seriesID: id,
+            fullLabel: "Episode 1",
+            number: 1,
+            title: "The Journey's End",
+            type: "tv",
+            isActive: true
+          )
+        ],
+        translations: [
+          MiraioDomain.Translation(
+            id: TranslationID(id.rawValue * 1000 + 1)!,
+            seriesID: id,
+            episodeID: episodeID,
+            authors: "AniLibria",
+            type: "dub",
+            kind: "voice",
+            language: "ru",
+            quality: "1080p",
+            isActive: true
+          )
+        ]
+      )
+    }
+  }
+#endif
 
 private struct OSLogDiagnostics: RedactedDiagnostics {
   private let logger = Logger(subsystem: "com.gridness.miraio", category: "diagnostics")

@@ -530,7 +530,7 @@ private struct SeriesTitle: View {
     if let title = series.title() {
       Text(verbatim: title)
     } else {
-      Text("Series ID") + Text(verbatim: " \(series.id.rawValue)")
+      Text(verbatim: "\(String(localized: "Series ID")) \(series.id.rawValue)")
     }
   }
 }
@@ -562,7 +562,7 @@ private struct EpisodeTitle: View {
     } else if let fullLabel = episode.fullLabel, !fullLabel.isEmpty {
       Text(verbatim: fullLabel)
     } else {
-      Text("Episode ID") + Text(verbatim: " \(episode.id.rawValue)")
+      Text(verbatim: "\(String(localized: "Episode ID")) \(episode.id.rawValue)")
     }
   }
 }
@@ -574,7 +574,7 @@ private struct TranslationTitle: View {
     let values = [translation.authors, translation.type, translation.language, translation.quality]
       .compactMap(\.self)
     if values.isEmpty {
-      Text("Translation ID") + Text(verbatim: " \(translation.id.rawValue)")
+      Text(verbatim: "\(String(localized: "Translation ID")) \(translation.id.rawValue)")
     } else {
       Text(verbatim: values.joined(separator: " · "))
         .multilineTextAlignment(.leading)

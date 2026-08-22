@@ -134,14 +134,28 @@ public struct CataloguePage: Codable, Hashable, Sendable {
   }
 
   package func mergingKnownFields(from older: CataloguePage) -> CataloguePage {
-    let olderByID = Dictionary(uniqueKeysWithValues: older.series.map { ($0.id, $0) })
-    var seen = Set<SeriesID>()
-    var merged = series.map { newer in
-      seen.insert(newer.id)
+    let olderByID = Dictionary(older.series.map { ($0.id, $0) }) { first, _ in first }
+    let merged = series.map { newer in
       return olderByID[newer.id]?.merging(newer) ?? newer
     }
-    merged.append(contentsOf: older.series.filter { !seen.contains($0.id) })
     return CataloguePage(series: merged, nextCursor: nextCursor)
+  }
+
+  public func appending(_ nextPage: CataloguePage) -> CataloguePage {
+    var merged = series
+    var indices: [SeriesID: Int] = [:]
+    for (index, item) in merged.enumerated() where indices[item.id] == nil {
+      indices[item.id] = index
+    }
+    for newer in nextPage.series {
+      if let index = indices[newer.id] {
+        merged[index] = merged[index].merging(newer)
+      } else {
+        indices[newer.id] = merged.count
+        merged.append(newer)
+      }
+    }
+    return CataloguePage(series: merged, nextCursor: nextPage.nextCursor)
   }
 }
 

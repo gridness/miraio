@@ -18,6 +18,16 @@ enum CatalogueNotice: Equatable {
   case offline
 }
 
+private enum CatalogueCollectionTarget {
+  case catalogue
+  case search
+}
+
+private enum CatalogueUpdateMode {
+  case replace
+  case append
+}
+
 @MainActor
 @Observable
 final class CatalogueViewModel {
@@ -38,6 +48,9 @@ final class CatalogueViewModel {
   var isInspectorLoading = false
 
   private let discovery: CatalogueDiscovery
+  private var catalogueOperationID: UUID?
+  private var searchOperationID: UUID?
+  private var inspectorOperation: (id: UUID, task: Task<SeriesDetails, any Error>)?
 
   init(discovery: CatalogueDiscovery) {
     self.discovery = discovery
@@ -45,24 +58,33 @@ final class CatalogueViewModel {
 
   func loadCatalogue(intent: CatalogueLoadIntent = .automatic) async {
     guard let query = SeriesQuery(pageSize: 50) else { return }
+    let operationID = UUID()
+    catalogueOperationID = operationID
     isCatalogueLoading = true
-    defer { isCatalogueLoading = false }
+    defer {
+      if catalogueOperationID == operationID { isCatalogueLoading = false }
+    }
 
     let stream = await discovery.updates(for: query, intent: intent)
     for await update in stream {
-      guard !Task.isCancelled else { return }
-      apply(update, toSearch: false, appending: false)
+      guard !Task.isCancelled, catalogueOperationID == operationID else { return }
+      apply(update, to: .catalogue, mode: .replace)
     }
   }
 
   func loadNextCataloguePage() async {
     guard let cursor = catalogueCursor, let query = SeriesQuery(pageSize: 50) else { return }
+    let operationID = UUID()
+    catalogueOperationID = operationID
     isCatalogueLoading = true
-    defer { isCatalogueLoading = false }
+    defer {
+      if catalogueOperationID == operationID { isCatalogueLoading = false }
+    }
+
     let stream = await discovery.updates(for: query, cursor: cursor)
     for await update in stream {
-      guard !Task.isCancelled else { return }
-      apply(update, toSearch: false, appending: true)
+      guard !Task.isCancelled, catalogueOperationID == operationID else { return }
+      apply(update, to: .catalogue, mode: .append)
     }
   }
 
@@ -70,20 +92,29 @@ final class CatalogueViewModel {
     guard let query = SeriesQuery(searchText: searchText, pageSize: 50),
       query.searchText != nil
     else {
+      searchOperationID = nil
+      isSearchLoading = false
       searchResults = []
       searchCursor = nil
       searchNotice = nil
       return
     }
+
     let expectedSearch = query.searchText
+    let operationID = UUID()
+    searchOperationID = operationID
     isSearchLoading = true
-    defer { isSearchLoading = false }
+    defer {
+      if searchOperationID == operationID { isSearchLoading = false }
+    }
+
     let stream = await discovery.updates(for: query)
     for await update in stream {
       guard !Task.isCancelled,
+        searchOperationID == operationID,
         SeriesQuery(searchText: searchText, pageSize: 50)?.searchText == expectedSearch
       else { return }
-      apply(update, toSearch: true, appending: false)
+      apply(update, to: .search, mode: .replace)
     }
   }
 
@@ -92,25 +123,50 @@ final class CatalogueViewModel {
       let query = SeriesQuery(searchText: searchText, pageSize: 50),
       query.searchText != nil
     else { return }
+
+    let expectedSearch = query.searchText
+    let operationID = UUID()
+    searchOperationID = operationID
     isSearchLoading = true
-    defer { isSearchLoading = false }
+    defer {
+      if searchOperationID == operationID { isSearchLoading = false }
+    }
+
     let stream = await discovery.updates(for: query, cursor: cursor)
     for await update in stream {
-      guard !Task.isCancelled else { return }
-      apply(update, toSearch: true, appending: true)
+      guard !Task.isCancelled,
+        searchOperationID == operationID,
+        SeriesQuery(searchText: searchText, pageSize: 50)?.searchText == expectedSearch
+      else { return }
+      apply(update, to: .search, mode: .append)
     }
   }
 
   func select(_ series: Series) async {
+    inspectorOperation?.task.cancel()
     selectedSeriesID = series.id
     selectedDetails = nil
     selectedEpisodeID = nil
     selectedTranslationID = nil
     isInspectorLoading = true
-    defer { isInspectorLoading = false }
+
+    let operationID = UUID()
+    let discovery = self.discovery
+    let task = Task { try await discovery.details(for: series.id) }
+    inspectorOperation = (operationID, task)
+    defer {
+      if inspectorOperation?.id == operationID {
+        inspectorOperation = nil
+        isInspectorLoading = false
+      }
+    }
+
     do {
-      let details = try await discovery.details(for: series.id)
-      guard !Task.isCancelled, selectedSeriesID == series.id else { return }
+      let details = try await task.value
+      guard !Task.isCancelled,
+        inspectorOperation?.id == operationID,
+        selectedSeriesID == series.id
+      else { return }
       selectedDetails = details
       if let episode = details.episodes.first(where: { $0.isActive != false })
         ?? details.episodes.first
@@ -118,7 +174,10 @@ final class CatalogueViewModel {
         select(episode, in: details)
       }
     } catch {
-      guard !Task.isCancelled else { return }
+      guard !Task.isCancelled,
+        inspectorOperation?.id == operationID,
+        selectedSeriesID == series.id
+      else { return }
       selectedDetails = SeriesDetails(series: series, episodes: [], translations: [])
     }
   }
@@ -132,6 +191,9 @@ final class CatalogueViewModel {
   }
 
   func closeInspector() {
+    inspectorOperation?.task.cancel()
+    inspectorOperation = nil
+    isInspectorLoading = false
     selectedSeriesID = nil
     selectedDetails = nil
     selectedEpisodeID = nil
@@ -149,12 +211,12 @@ final class CatalogueViewModel {
 
   private func apply(
     _ update: CatalogueUpdate,
-    toSearch: Bool,
-    appending: Bool
+    to target: CatalogueCollectionTarget,
+    mode: CatalogueUpdateMode
   ) {
     switch update {
     case .snapshot(let page, let freshness, let isRefreshing):
-      set(page: page, toSearch: toSearch, appending: appending)
+      set(page: page, to: target, mode: mode)
       let notice: CatalogueNotice? = if isRefreshing {
         .refreshing
       } else if freshness == .visiblyStale {
@@ -162,41 +224,51 @@ final class CatalogueViewModel {
       } else {
         nil
       }
-      set(notice: notice, toSearch: toSearch)
-    case .staleFallback(let page, let failure):
-      set(page: page, toSearch: toSearch, appending: appending)
-      set(notice: failure == .transportUnavailable ? .offline : .visiblyStale, toSearch: toSearch)
-    case .failed(let failure, let retained):
-      if let retained { set(page: retained, toSearch: toSearch, appending: appending) }
-      set(notice: failure == .transportUnavailable ? .offline : .partialFailure, toSearch: toSearch)
-    }
-  }
-
-  private func set(page: CataloguePage, toSearch: Bool, appending: Bool) {
-    if toSearch {
-      searchResults = appending ? merge(searchResults, with: page.series) : page.series
-      searchCursor = page.nextCursor
-    } else {
-      catalogue = appending ? merge(catalogue, with: page.series) : page.series
-      catalogueCursor = page.nextCursor
-    }
-  }
-
-  private func set(notice: CatalogueNotice?, toSearch: Bool) {
-    if toSearch { searchNotice = notice } else { catalogueNotice = notice }
-  }
-
-  private func merge(_ existing: [Series], with incoming: [Series]) -> [Series] {
-    var result = existing
-    var indices = Dictionary(uniqueKeysWithValues: result.enumerated().map { ($0.element.id, $0.offset) })
-    for series in incoming {
-      if let index = indices[series.id] {
-        result[index] = series
+      set(notice: notice, to: target)
+    case .staleFallback(let page, let freshness, let failure):
+      set(page: page, to: target, mode: mode)
+      let notice: CatalogueNotice = if freshness == .visiblyStale {
+        .visiblyStale
+      } else if failure == .transportUnavailable {
+        .offline
       } else {
-        indices[series.id] = result.count
-        result.append(series)
+        .partialFailure
       }
+      set(notice: notice, to: target)
+    case .failed(let failure, let retained):
+      if let retained { set(page: retained, to: target, mode: mode) }
+      set(
+        notice: failure == .transportUnavailable ? .offline : .partialFailure,
+        to: target
+      )
     }
-    return result
+  }
+
+  private func set(
+    page: CataloguePage,
+    to target: CatalogueCollectionTarget,
+    mode: CatalogueUpdateMode
+  ) {
+    switch target {
+    case .search:
+      let current = CataloguePage(series: searchResults, nextCursor: searchCursor)
+      let result = mode == .append ? current.appending(page) : page
+      searchResults = result.series
+      searchCursor = result.nextCursor
+    case .catalogue:
+      let current = CataloguePage(series: catalogue, nextCursor: catalogueCursor)
+      let result = mode == .append ? current.appending(page) : page
+      catalogue = result.series
+      catalogueCursor = result.nextCursor
+    }
+  }
+
+  private func set(notice: CatalogueNotice?, to target: CatalogueCollectionTarget) {
+    switch target {
+    case .search:
+      searchNotice = notice
+    case .catalogue:
+      catalogueNotice = notice
+    }
   }
 }

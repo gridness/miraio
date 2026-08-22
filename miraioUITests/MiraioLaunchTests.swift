@@ -7,7 +7,7 @@ final class MiraioLaunchTests: XCTestCase {
 
   @MainActor
   func testMacOSApplicationLaunches() throws {
-    let app = XCUIApplication()
+    let app = makeApplication()
     app.launch()
 
     XCTAssertTrue(app.staticTexts["Miraio"].waitForExistence(timeout: 5))
@@ -25,7 +25,7 @@ final class MiraioLaunchTests: XCTestCase {
 
   @MainActor
   func testSearchQuerySurvivesDestinationChanges() throws {
-    let app = XCUIApplication()
+    let app = makeApplication()
     app.launch()
 
     app.buttons["source.search"].click()
@@ -47,7 +47,7 @@ final class MiraioLaunchTests: XCTestCase {
 
   @MainActor
   func testRussianChromeIsAvailable() throws {
-    let app = XCUIApplication()
+    let app = makeApplication()
     app.launchArguments += ["-AppleLanguages", "(ru)", "-AppleLocale", "ru_RU"]
     app.launch()
 
@@ -59,5 +59,34 @@ final class MiraioLaunchTests: XCTestCase {
     evidence.name = "UX-01 Russian Search destination"
     evidence.lifetime = .keepAlways
     add(evidence)
+  }
+
+  @MainActor
+  func testSeriesInspectorPreservesEpisodeAndTranslationSelection() throws {
+    let app = makeApplication()
+    app.launch()
+
+    let series = app.buttons["series.41"]
+    XCTAssertTrue(series.waitForExistence(timeout: 5))
+    series.click()
+    XCTAssertTrue(app.buttons["The Journey's End"].waitForExistence(timeout: 3))
+    XCTAssertTrue(app.buttons["AniLibria · dub · ru · 1080p"].exists)
+
+    app.buttons["source.search"].click()
+    XCTAssertTrue(app.buttons["Close Series inspector"].exists)
+    app.buttons["source.catalogue"].click()
+    XCTAssertTrue(app.buttons["The Journey's End"].exists)
+    XCTAssertTrue(app.buttons["AniLibria · dub · ru · 1080p"].exists)
+
+    let evidence = XCTAttachment(screenshot: app.screenshot())
+    evidence.name = "CAT-06 Series inspector context"
+    evidence.lifetime = .keepAlways
+    add(evidence)
+  }
+
+  private func makeApplication() -> XCUIApplication {
+    let app = XCUIApplication()
+    app.launchEnvironment["MIRAIO_UI_FIXTURE"] = "1"
+    return app
   }
 }

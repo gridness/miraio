@@ -30,6 +30,39 @@ struct CatalogueDiscoveryTests {
     #expect(await remote.pageRequestCount == 0)
   }
 
+  @Test("explicit refresh of a fresh page emits one refreshing snapshot before replacement")
+  func explicitRefreshDoesNotReclassifyFreshCacheAsStale() async throws {
+    let now = Date(timeIntervalSince1970: 2_000_000_000)
+    let query = try #require(SeriesQuery(pageSize: 50))
+    let cachedPage = CataloguePage(
+      series: [Series(id: try #require(SeriesID(41)))],
+      nextCursor: nil
+    )
+    let refreshedPage = CataloguePage(
+      series: [Series(id: try #require(SeriesID(42)))],
+      nextCursor: nil
+    )
+    let cache = CatalogueCacheFake(
+      snapshot: CatalogueSnapshot(page: cachedPage, storedAt: now.addingTimeInterval(-30 * 60))
+    )
+    let discovery = CatalogueDiscovery(
+      remote: CatalogueRemoteFake(page: refreshedPage),
+      cache: cache,
+      now: { now }
+    )
+
+    let updates = await collect(
+      await discovery.updates(for: query, intent: .explicitReload)
+    )
+
+    #expect(
+      updates == [
+        .snapshot(cachedPage, freshness: .fresh, isRefreshing: true),
+        .snapshot(refreshedPage, freshness: .fresh, isRefreshing: false),
+      ]
+    )
+  }
+
   @Test("a one-to-24-hour page stays visible while one bounded refresh runs")
   func staleWhileRefresh() async throws {
     let now = Date(timeIntervalSince1970: 2_000_000_000)
@@ -49,15 +82,10 @@ struct CatalogueDiscoveryTests {
     let discovery = CatalogueDiscovery(remote: remote, cache: cache, now: { now })
 
     let updates = await collect(await discovery.updates(for: query))
-    let mergedPage = CataloguePage(
-      series: refreshedPage.series + cachedPage.series,
-      nextCursor: nil
-    )
-
     #expect(
       updates == [
         .snapshot(cachedPage, freshness: .staleWhileRefreshing, isRefreshing: true),
-        .snapshot(mergedPage, freshness: .fresh, isRefreshing: false),
+        .snapshot(refreshedPage, freshness: .fresh, isRefreshing: false),
       ]
     )
     #expect(await remote.pageRequestCount == 1)
@@ -85,7 +113,15 @@ struct CatalogueDiscoveryTests {
 
     let updates = await collect(await discovery.updates(for: query))
 
-    #expect(updates == [.staleFallback(cachedPage, failure: .transportUnavailable)])
+    #expect(
+      updates == [
+        .staleFallback(
+          cachedPage,
+          freshness: .visiblyStale,
+          failure: .transportUnavailable
+        )
+      ]
+    )
   }
 
   @Test("a page older than 30 days is unusable even when refresh fails")
@@ -297,6 +333,25 @@ struct CatalogueDiscoveryTests {
     #expect(await cache.clearCount == 0)
   }
 
+  @Test("abandoning the only caller cancels remote Catalogue work after debounce")
+  func cancelsAbandonedRemoteWork() async throws {
+    let query = try #require(SeriesQuery(pageSize: 50))
+    let remote = CancellationAwareCatalogueRemote()
+    let discovery = CatalogueDiscovery(
+      remote: remote,
+      cache: CatalogueCacheFake(snapshot: nil)
+    )
+
+    let loading = Task { await collect(await discovery.updates(for: query)) }
+    await remote.waitUntilRequested()
+    loading.cancel()
+    for _ in 0..<30 { await Task.yield() }
+
+    #expect(await remote.wasCancelled)
+    await discovery.cancelNonessentialWork()
+    _ = await loading.value
+  }
+
   @Test("the Series inspector retains a usable cached detail projection when refresh fails")
   func cachedSeriesDetailsFallback() async throws {
     let now = Date(timeIntervalSince1970: 2_000_000_000)
@@ -328,7 +383,7 @@ struct CatalogueDiscoveryTests {
 private extension CatalogueUpdate {
   var page: CataloguePage? {
     switch self {
-    case .snapshot(let page, _, _), .staleFallback(let page, _): page
+    case .snapshot(let page, _, _), .staleFallback(let page, _, _): page
     case .failed(_, let retained): retained
     }
   }

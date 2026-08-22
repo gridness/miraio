@@ -39,6 +39,8 @@ struct Anime365CatalogueClientTests {
               },
               {"id": "broken", "titles": {"en": "Malformed"}},
               {"id": 42, "titles": null, "isAiring": 1},
+              {"id": 43, "titles": {"en": "Still usable"}, "year": "unknown", "isActive": "unknown"},
+              {"id": 41, "year": 2024},
               {"titles": {"en": "Missing identity"}}
             ]
           }
@@ -46,16 +48,19 @@ struct Anime365CatalogueClientTests {
       ),
       diagnostics: diagnostics
     )
-    let query = try #require(SeriesQuery(searchText: "Frieren", pageSize: 4))
+    let query = try #require(SeriesQuery(searchText: "Frieren", pageSize: 6))
 
     let page = try await client.loadSeries(query: query, cursor: nil)
 
-    #expect(page.series.map(\.id) == [SeriesID(41), SeriesID(42)])
+    #expect(page.series.map(\.id) == [SeriesID(41), SeriesID(42), SeriesID(43)])
     #expect(page.series[0].title(preferredLanguages: ["ru"]) == "Фрирен")
     #expect(page.series[0].typeTitle == "TV Series")
     #expect(page.series[0].posterURL == URL(string: "https://images.example.test/41.jpg"))
-    #expect(page.series[0].year == 2023)
+    #expect(page.series[0].year == 2024)
     #expect(page.series[1].isAiring == true)
+    #expect(page.series[2].title(preferredLanguages: ["en"]) == "Still usable")
+    #expect(page.series[2].year == nil)
+    #expect(page.series[2].isActive == nil)
     #expect(page.nextCursor != nil)
     #expect(await diagnostics.events.count == 2)
 
@@ -64,7 +69,27 @@ struct Anime365CatalogueClientTests {
     #expect(components.path == "/api/series")
     #expect(components.queryItems?.contains(URLQueryItem(name: "query", value: "Frieren")) == true)
     #expect(components.queryItems?.contains(URLQueryItem(name: "isActive", value: "1")) == true)
-    #expect(components.queryItems?.contains(URLQueryItem(name: "limit", value: "4")) == true)
+    #expect(components.queryItems?.contains(URLQueryItem(name: "limit", value: "6")) == true)
+  }
+
+  @Test("a nonempty envelope containing no usable Series is rejected")
+  func rejectsAllInvalidSeriesEnvelope() async throws {
+    let client = Anime365CatalogueClient(
+      baseURL: try #require(URL(string: "https://example.test/api/")),
+      userAgent: "MiraioTests/1",
+      session: makeStubbedSession(
+        statusCode: 200,
+        body: #"{"data":[{"id":"broken"},{"titles":{"en":"No identity"}}]}"#
+      ),
+      diagnostics: CatalogueDiagnosticRecorder()
+    )
+
+    await #expect(throws: CatalogueFailure.unusableResponse) {
+      try await client.loadSeries(
+        query: try #require(SeriesQuery(pageSize: 2)),
+        cursor: nil
+      )
+    }
   }
 
   @Test("Series details use only flat documented Episode and Translation relationships")
@@ -80,9 +105,9 @@ struct Anime365CatalogueClientTests {
         case "/api/series/41":
           #"{"data":{"id":41,"titles":{"en":"Frieren"}}}"#
         case "/api/episodes":
-          #"{"data":[{"id":4101,"seriesId":41,"episodeFull":"Episode 1","episodeInt":1,"episodeTitle":"The Journey's End","episodeType":"tv","isActive":1},{"id":4102,"seriesId":"broken"}]}"#
+          #"{"data":[{"id":4101,"seriesId":41,"episodeFull":"Episode 1","episodeInt":1,"episodeTitle":"The Journey's End","episodeType":"tv","isActive":1},{"id":4102,"seriesId":41,"episodeTitle":{"malformed":true},"isActive":"unknown"},{"id":4103,"seriesId":"broken"}]}"#
         case "/api/translations":
-          #"{"data":[{"id":9001,"seriesId":41,"episodeId":4101,"authorsSummary":"AniLibria","type":"dub","typeKind":"voice","typeLang":"ru","qualityType":"1080p","isActive":1},{"id":9002,"seriesId":99,"episodeId":4101}]}"#
+          #"{"data":[{"id":9001,"seriesId":41,"episodeId":4101,"authorsSummary":"AniLibria","type":"dub","typeKind":"voice","typeLang":"ru","qualityType":"1080p","isActive":1},{"id":9002,"seriesId":41,"episodeId":4102,"authorsSummary":{"malformed":true}},{"id":9003,"seriesId":99,"episodeId":4101}]}"#
         default:
           #"{"error":{"code":404,"message":"missing"}}"#
         }
@@ -94,9 +119,9 @@ struct Anime365CatalogueClientTests {
     let details = try await client.loadSeriesDetails(id: try #require(SeriesID(41)))
 
     #expect(details.series.title(preferredLanguages: ["en"]) == "Frieren")
-    #expect(details.episodes.map(\.id) == [EpisodeID(4101)])
+    #expect(details.episodes.map(\.id) == [EpisodeID(4101), EpisodeID(4102)])
     #expect(details.episodes[0].number == 1)
-    #expect(details.translations.map(\.id) == [TranslationID(9001)])
+    #expect(details.translations.map(\.id) == [TranslationID(9001), TranslationID(9002)])
     #expect(details.translations[0].episodeID == EpisodeID(4101))
     #expect(Set(requestedPaths.values) == ["/api/series/41", "/api/episodes", "/api/translations"])
   }
@@ -128,6 +153,34 @@ struct BoundedCatalogueCacheTests {
     #expect(await reopened.snapshot(for: request) == snapshot)
     await reopened.clear()
     #expect(await reopened.snapshot(for: request) == nil)
+  }
+
+  @Test("a corrupt projection is ignored and removed")
+  func removesCorruptProjection() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let request = CataloguePageRequest(query: try #require(SeriesQuery(pageSize: 50)))
+    let snapshot = CatalogueSnapshot(
+      page: CataloguePage(
+        series: [Series(id: try #require(SeriesID(41)))],
+        nextCursor: nil
+      ),
+      storedAt: Date(timeIntervalSince1970: 2_000_000_000)
+    )
+    let cache = BoundedCatalogueCache(directoryURL: directory)
+    await cache.store(snapshot, for: request)
+    await cache.releaseMemory()
+    let cacheFile = try #require(
+      FileManager.default.contentsOfDirectory(
+        at: directory,
+        includingPropertiesForKeys: nil
+      ).first
+    )
+    try Data("corrupt".utf8).write(to: cacheFile, options: .atomic)
+
+    #expect(await cache.snapshot(for: request) == nil)
+    #expect(!FileManager.default.fileExists(atPath: cacheFile.path))
   }
 
   @Test("the configured disk budget evicts the least-recently-used projection")

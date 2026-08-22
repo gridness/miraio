@@ -6,14 +6,14 @@ import MiraioDomain
 public actor BoundedCatalogueCache: CatalogueCache {
   private struct MemoryEntry {
     let snapshot: CatalogueSnapshot
-    let cost: Int
-    var access: UInt64
+    let byteCost: Int
+    var accessSequence: UInt64
   }
 
   private struct DetailsMemoryEntry {
     let snapshot: CatalogueDetailsSnapshot
-    let cost: Int
-    var access: UInt64
+    let byteCost: Int
+    var accessSequence: UInt64
   }
 
   private struct DiskEnvelope: Codable {
@@ -36,7 +36,7 @@ public actor BoundedCatalogueCache: CatalogueCache {
   private var memory: [CataloguePageRequest: MemoryEntry] = [:]
   private var detailsMemory: [SeriesID: DetailsMemoryEntry] = [:]
   private var memoryCost = 0
-  private var access: UInt64 = 0
+  private var accessSequence: UInt64 = 0
 
   public init(directoryURL: URL) {
     self.directoryURL = directoryURL
@@ -59,9 +59,9 @@ public actor BoundedCatalogueCache: CatalogueCache {
   }
 
   public func snapshot(for request: CataloguePageRequest) -> CatalogueSnapshot? {
-    access &+= 1
+    accessSequence &+= 1
     if var entry = memory[request] {
-      entry.access = access
+      entry.accessSequence = accessSequence
       memory[request] = entry
       return entry.snapshot
     }
@@ -105,9 +105,9 @@ public actor BoundedCatalogueCache: CatalogueCache {
   }
 
   public func details(for id: SeriesID) -> CatalogueDetailsSnapshot? {
-    access &+= 1
+    accessSequence &+= 1
     if var entry = detailsMemory[id] {
-      entry.access = access
+      entry.accessSequence = accessSequence
       detailsMemory[id] = entry
       return entry.snapshot
     }
@@ -168,28 +168,17 @@ public actor BoundedCatalogueCache: CatalogueCache {
     for request: CataloguePageRequest
   ) {
     guard cost <= memoryCapacity else { return }
-    access &+= 1
+    accessSequence &+= 1
     if let existing = memory[request] {
-      memoryCost -= existing.cost
+      memoryCost -= existing.byteCost
     }
-    memory[request] = MemoryEntry(snapshot: snapshot, cost: cost, access: access)
+    memory[request] = MemoryEntry(
+      snapshot: snapshot,
+      byteCost: cost,
+      accessSequence: accessSequence
+    )
     memoryCost += cost
-
-    while memoryCost > memoryCapacity,
-      !memory.isEmpty || !detailsMemory.isEmpty
-    {
-      let oldestPage = memory.min(by: { $0.value.access < $1.value.access })
-      let oldestDetails = detailsMemory.min(by: { $0.value.access < $1.value.access })
-      if let oldestPage,
-        oldestDetails == nil || oldestPage.value.access <= oldestDetails!.value.access
-      {
-        memoryCost -= oldestPage.value.cost
-        memory[oldestPage.key] = nil
-      } else if let oldestDetails {
-        memoryCost -= oldestDetails.value.cost
-        detailsMemory[oldestDetails.key] = nil
-      }
-    }
+    evictMemoryIfNeeded()
   }
 
   private func insertDetailsIntoMemory(
@@ -198,24 +187,33 @@ public actor BoundedCatalogueCache: CatalogueCache {
     for id: SeriesID
   ) {
     guard cost <= memoryCapacity else { return }
-    access &+= 1
-    if let existing = detailsMemory[id] { memoryCost -= existing.cost }
-    detailsMemory[id] = DetailsMemoryEntry(snapshot: snapshot, cost: cost, access: access)
+    accessSequence &+= 1
+    if let existing = detailsMemory[id] { memoryCost -= existing.byteCost }
+    detailsMemory[id] = DetailsMemoryEntry(
+      snapshot: snapshot,
+      byteCost: cost,
+      accessSequence: accessSequence
+    )
     memoryCost += cost
     evictMemoryIfNeeded()
   }
 
   private func evictMemoryIfNeeded() {
     while memoryCost > memoryCapacity, !memory.isEmpty || !detailsMemory.isEmpty {
-      let oldestPage = memory.min(by: { $0.value.access < $1.value.access })
-      let oldestDetails = detailsMemory.min(by: { $0.value.access < $1.value.access })
+      let oldestPage = memory.min(by: {
+        $0.value.accessSequence < $1.value.accessSequence
+      })
+      let oldestDetails = detailsMemory.min(by: {
+        $0.value.accessSequence < $1.value.accessSequence
+      })
       if let oldestPage,
-        oldestDetails == nil || oldestPage.value.access <= oldestDetails!.value.access
+        oldestDetails == nil
+          || oldestPage.value.accessSequence <= oldestDetails!.value.accessSequence
       {
-        memoryCost -= oldestPage.value.cost
+        memoryCost -= oldestPage.value.byteCost
         memory[oldestPage.key] = nil
       } else if let oldestDetails {
-        memoryCost -= oldestDetails.value.cost
+        memoryCost -= oldestDetails.value.byteCost
         detailsMemory[oldestDetails.key] = nil
       }
     }

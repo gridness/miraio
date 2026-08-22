@@ -3,6 +3,8 @@ import Foundation
 import ImageIO
 import MiraioApplication
 
+private let maximumArtworkDownloadBytes = 20 * 1_024 * 1_024
+
 package struct ArtworkResponse: Sendable {
   package let data: Data
   package let mimeType: String?
@@ -24,11 +26,13 @@ public actor ArtworkClient: ArtworkLoading {
   private struct InFlightDownload: Sendable {
     let id: UUID
     let task: Task<ArtworkResponse, any Error>
+    var demandIDs: Set<UUID>
   }
 
   private struct InFlightDecode: Sendable {
     let id: UUID
     let task: Task<ArtworkImage, any Error>
+    var demandIDs: Set<UUID>
   }
 
   private struct DecodedEntry: @unchecked Sendable {
@@ -37,7 +41,6 @@ public actor ArtworkClient: ArtworkLoading {
     var access: UInt64
   }
 
-  private static let maximumDownloadBytes = 20 * 1_024 * 1_024
   private static let maximumPixels = 40_000_000
   private static let decodedCapacity = 128 * 1_024 * 1_024
 
@@ -59,41 +62,56 @@ public actor ArtworkClient: ArtworkLoading {
   }
 
   public func image(for request: ArtworkRequest) async throws -> ArtworkImage {
-    guard Self.isAllowed(request.url) else { throw ArtworkFailure.insecureLocation }
+    guard ArtworkLocationPolicy.isAllowed(request.url) else {
+      throw ArtworkFailure.insecureLocation
+    }
     access &+= 1
     if var entry = decoded[request] {
       entry.access = access
       decoded[request] = entry
       return entry.image
     }
-    if let inFlight = decodes[request] {
-      let image = try await inFlight.task.value
-      try Task.checkCancellation()
-      return image
+    let demandID = UUID()
+    let inFlight: InFlightDecode
+    if var existing = decodes[request] {
+      existing.demandIDs.insert(demandID)
+      decodes[request] = existing
+      inFlight = existing
+    } else {
+      let id = UUID()
+      let task = Task { [self] in
+        let response = try await download(request.url)
+        return try await decode(response: response, for: request)
+      }
+      inFlight = InFlightDecode(id: id, task: task, demandIDs: [demandID])
+      decodes[request] = inFlight
     }
 
-    let id = UUID()
-    let task = Task { [self] in
-      let response = try await download(request.url)
-      return try await decode(response: response, for: request)
-    }
-    decodes[request] = InFlightDecode(id: id, task: task)
-
-    do {
-      let image = try await task.value
-      if decodes[request]?.id == id { decodes[request] = nil }
-      try Task.checkCancellation()
-      insertDecoded(image, for: request)
-      return image
-    } catch is CancellationError {
-      if decodes[request]?.id == id { decodes[request] = nil }
-      throw ArtworkFailure.cancelled
-    } catch let failure as ArtworkFailure {
-      if decodes[request]?.id == id { decodes[request] = nil }
-      throw failure
-    } catch {
-      if decodes[request]?.id == id { decodes[request] = nil }
-      throw ArtworkFailure.transportUnavailable
+    return try await withTaskCancellationHandler {
+      do {
+        let image = try await inFlight.task.value
+        releaseDecodeDemand(request: request, flightID: inFlight.id, demandID: demandID)
+        try Task.checkCancellation()
+        insertDecoded(image, for: request)
+        return image
+      } catch is CancellationError {
+        releaseDecodeDemand(request: request, flightID: inFlight.id, demandID: demandID)
+        throw ArtworkFailure.cancelled
+      } catch let failure as ArtworkFailure {
+        releaseDecodeDemand(request: request, flightID: inFlight.id, demandID: demandID)
+        throw failure
+      } catch {
+        releaseDecodeDemand(request: request, flightID: inFlight.id, demandID: demandID)
+        throw ArtworkFailure.transportUnavailable
+      }
+    } onCancel: {
+      Task {
+        await self.cancelDecodeDemand(
+          request: request,
+          flightID: inFlight.id,
+          demandID: demandID
+        )
+      }
     }
   }
 
@@ -113,36 +131,86 @@ public actor ArtworkClient: ArtworkLoading {
   }
 
   private func download(_ url: URL) async throws -> ArtworkResponse {
-    if let inFlight = downloads[url] {
-      let response = try await inFlight.task.value
-      try Task.checkCancellation()
-      return response
+    let demandID = UUID()
+    let inFlight: InFlightDownload
+    if var existing = downloads[url] {
+      existing.demandIDs.insert(demandID)
+      downloads[url] = existing
+      inFlight = existing
+    } else {
+      let id = UUID()
+      let transport = self.transport
+      let permits = downloadPermits
+      let task = Task {
+        try await permits.withPermit {
+          try await transport.data(for: url)
+        }
+      }
+      inFlight = InFlightDownload(id: id, task: task, demandIDs: [demandID])
+      downloads[url] = inFlight
     }
 
-    let id = UUID()
-    let transport = self.transport
-    let permits = downloadPermits
-    let task = Task {
-      try await permits.withPermit {
-        try await transport.data(for: url)
+    return try await withTaskCancellationHandler {
+      do {
+        let response = try await inFlight.task.value
+        releaseDownloadDemand(url: url, flightID: inFlight.id, demandID: demandID)
+        try Task.checkCancellation()
+        guard ArtworkLocationPolicy.isAllowed(response.finalURL) else {
+          throw ArtworkFailure.insecureLocation
+        }
+        guard response.data.count <= maximumArtworkDownloadBytes else {
+          throw ArtworkFailure.oversizedDownload
+        }
+        guard response.mimeType?.lowercased().hasPrefix("image/") == true else {
+          throw ArtworkFailure.unsupportedContent
+        }
+        return response
+      } catch {
+        releaseDownloadDemand(url: url, flightID: inFlight.id, demandID: demandID)
+        throw error
+      }
+    } onCancel: {
+      Task {
+        await self.cancelDownloadDemand(
+          url: url,
+          flightID: inFlight.id,
+          demandID: demandID
+        )
       }
     }
-    downloads[url] = InFlightDownload(id: id, task: task)
+  }
 
-    do {
-      let response = try await task.value
-      if downloads[url]?.id == id { downloads[url] = nil }
-      guard Self.isAllowed(response.finalURL) else { throw ArtworkFailure.insecureLocation }
-      guard response.data.count <= Self.maximumDownloadBytes else {
-        throw ArtworkFailure.oversizedDownload
-      }
-      guard response.mimeType?.lowercased().hasPrefix("image/") == true else {
-        throw ArtworkFailure.unsupportedContent
-      }
-      return response
-    } catch {
-      if downloads[url]?.id == id { downloads[url] = nil }
-      throw error
+  private func releaseDecodeDemand(request: ArtworkRequest, flightID: UUID, demandID: UUID) {
+    guard var inFlight = decodes[request], inFlight.id == flightID else { return }
+    inFlight.demandIDs.remove(demandID)
+    decodes[request] = inFlight.demandIDs.isEmpty ? nil : inFlight
+  }
+
+  private func cancelDecodeDemand(request: ArtworkRequest, flightID: UUID, demandID: UUID) {
+    guard var inFlight = decodes[request], inFlight.id == flightID else { return }
+    inFlight.demandIDs.remove(demandID)
+    if inFlight.demandIDs.isEmpty {
+      decodes[request] = nil
+      inFlight.task.cancel()
+    } else {
+      decodes[request] = inFlight
+    }
+  }
+
+  private func releaseDownloadDemand(url: URL, flightID: UUID, demandID: UUID) {
+    guard var inFlight = downloads[url], inFlight.id == flightID else { return }
+    inFlight.demandIDs.remove(demandID)
+    downloads[url] = inFlight.demandIDs.isEmpty ? nil : inFlight
+  }
+
+  private func cancelDownloadDemand(url: URL, flightID: UUID, demandID: UUID) {
+    guard var inFlight = downloads[url], inFlight.id == flightID else { return }
+    inFlight.demandIDs.remove(demandID)
+    if inFlight.demandIDs.isEmpty {
+      downloads[url] = nil
+      inFlight.task.cancel()
+    } else {
+      downloads[url] = inFlight
     }
   }
 
@@ -198,7 +266,10 @@ public actor ArtworkClient: ArtworkLoading {
     }
   }
 
-  private nonisolated static func isAllowed(_ url: URL) -> Bool {
+}
+
+private enum ArtworkLocationPolicy {
+  static func isAllowed(_ url: URL) -> Bool {
     guard url.scheme?.lowercased() == "https",
       url.user == nil,
       url.password == nil,
@@ -208,7 +279,7 @@ public actor ArtworkClient: ArtworkLoading {
     return !isPrivateAddress(host)
   }
 
-  private nonisolated static func isPrivateAddress(_ host: String) -> Bool {
+  private static func isPrivateAddress(_ host: String) -> Bool {
     if host == "localhost" || host == "::1" { return true }
     if host.hasPrefix("fc") || host.hasPrefix("fd") || host.hasPrefix("fe8")
       || host.hasPrefix("fe9") || host.hasPrefix("fea") || host.hasPrefix("feb")
@@ -227,10 +298,17 @@ public actor ArtworkClient: ArtworkLoading {
 }
 
 package actor URLSessionArtworkTransport: ArtworkTransport {
+  private let redirectDelegate: ArtworkRedirectDelegate
   private let session: URLSession
 
   package init(cacheDirectoryURL: URL) {
-    session = URLSession(configuration: Self.makeConfiguration(cacheDirectoryURL: cacheDirectoryURL))
+    let redirectDelegate = ArtworkRedirectDelegate()
+    self.redirectDelegate = redirectDelegate
+    session = URLSession(
+      configuration: Self.makeConfiguration(cacheDirectoryURL: cacheDirectoryURL),
+      delegate: redirectDelegate,
+      delegateQueue: nil
+    )
   }
 
   package nonisolated static func makeConfiguration(
@@ -251,12 +329,25 @@ package actor URLSessionArtworkTransport: ArtworkTransport {
 
   package func data(for url: URL) async throws -> ArtworkResponse {
     do {
-      let (data, response) = try await session.data(from: url)
+      let (bytes, response) = try await session.bytes(from: url)
       guard let httpResponse = response as? HTTPURLResponse else {
         throw ArtworkFailure.transportUnavailable
       }
       guard (200..<300).contains(httpResponse.statusCode) else {
         throw ArtworkFailure.serviceRejected(code: httpResponse.statusCode)
+      }
+      guard httpResponse.expectedContentLength <= maximumArtworkDownloadBytes else {
+        throw ArtworkFailure.oversizedDownload
+      }
+      var data = Data()
+      if httpResponse.expectedContentLength > 0 {
+        data.reserveCapacity(Int(httpResponse.expectedContentLength))
+      }
+      for try await byte in bytes {
+        guard data.count < maximumArtworkDownloadBytes else {
+          throw ArtworkFailure.oversizedDownload
+        }
+        data.append(byte)
       }
       return ArtworkResponse(
         data: data,
@@ -278,5 +369,42 @@ package actor URLSessionArtworkTransport: ArtworkTransport {
     for task in await session.allTasks {
       task.cancel()
     }
+  }
+}
+
+private final class ArtworkRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+  private static let maximumRedirectCount = 5
+
+  private let lock = NSLock()
+  private var redirectCounts: [Int: Int] = [:]
+
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse,
+    newRequest request: URLRequest,
+    completionHandler: @escaping @Sendable (URLRequest?) -> Void
+  ) {
+    let redirectCount = lock.withLock {
+      let next = redirectCounts[task.taskIdentifier, default: 0] + 1
+      redirectCounts[task.taskIdentifier] = next
+      return next
+    }
+    guard redirectCount <= Self.maximumRedirectCount,
+      let url = request.url,
+      ArtworkLocationPolicy.isAllowed(url)
+    else {
+      completionHandler(nil)
+      return
+    }
+    completionHandler(request)
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    didCompleteWithError error: (any Error)?
+  ) {
+    lock.withLock { redirectCounts[task.taskIdentifier] = nil }
   }
 }
