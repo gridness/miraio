@@ -12,6 +12,9 @@ jobs:
   foundation:
     runs-on: macos-26
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -78,3 +81,4 @@ jobs:
           name: foundation-evidence
           path: .artifacts/
           if-no-files-found: error
+          include-hidden-files: true
