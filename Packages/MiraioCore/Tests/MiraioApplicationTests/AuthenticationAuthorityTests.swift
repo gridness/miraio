@@ -218,6 +218,7 @@ struct AuthenticationAuthorityTests {
 
     let signOut = Task { await authority.signOut() }
     await gate.waitUntilSuspended()
+    #expect(await authority.currentState == .incompleteSignOut)
     let overlappingSignIn = await authority.signIn(
       email: "other@example.com",
       password: "transient"

@@ -309,7 +309,7 @@ public actor AuthenticationAuthority {
     activeCredential = nil
     verifiedProfile = nil
     lastSuccessfulVerification = nil
-    transition(to: .signedOut)
+    transition(to: .incompleteSignOut)
     await remote.cancelAllRequests()
     await protectedSession.clearProtectedSession()
 
