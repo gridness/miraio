@@ -49,4 +49,7 @@ manifest_version="$(jq -r '.["."]' .release-please-manifest.json)"
 [[ "$version" == "$manifest_version" ]] || fail "version.txt and Release Please manifest disagree"
 [[ -f CHANGELOG.md ]] || fail "CHANGELOG.md is missing"
 
+rg -q 'fetch-depth: 0' .github/workflows/ci.yml || fail "CI must fetch mainline history"
+rg -q 'git rev-list --count origin/main' .github/workflows/ci.yml || fail "CI build numbers must use mainline commit count"
+
 echo "foundation audit passed"

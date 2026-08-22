@@ -15,6 +15,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Prepare evidence directory
         run: mkdir -p .artifacts
@@ -23,11 +25,11 @@ jobs:
         run: scripts/verify-foundation.sh | tee .artifacts/foundation-audit.txt
 
       - name: Test shared package on macOS
-        run: swift test --package-path Packages/MiraioCore
+        run: swift test --package-path Packages/MiraioCore | tee .artifacts/macos-package-tests.txt
 
       - name: Test shared package on iOS 26 Simulator
         run: |
-          IOS_DEVICE_ID="$(xcrun simctl list devices available --json | jq -r '[.devices[][] | select(.name | startswith("iPhone"))][0].udid')"
+          IOS_DEVICE_ID="$(xcrun simctl list devices available --json | jq -r '[.devices | to_entries[] | select(.key | contains("iOS-26-")) | .value[] | select(.name | startswith("iPhone"))][0].udid // empty')"
           test -n "$IOS_DEVICE_ID"
           xcodebuild \
             -scheme MiraioCore-Package \
@@ -63,7 +65,8 @@ jobs:
 
       - name: Build equivalent channel configurations
         run: |
-          BUILD_NUMBER="$(git rev-list --count HEAD)"
+          BUILD_NUMBER="$(git rev-list --count origin/main)"
+          test "$BUILD_NUMBER" -gt 0
           xcodebuild -project miraio.xcodeproj -scheme Miraio -configuration Homebrew -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/miraio-homebrew" CODE_SIGNING_ALLOWED=NO MIRAIO_BUILD_NUMBER="$BUILD_NUMBER" build
           xcodebuild -project miraio.xcodeproj -scheme Miraio -configuration Store -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/miraio-store" CODE_SIGNING_ALLOWED=NO MIRAIO_BUILD_NUMBER="$BUILD_NUMBER" build
           MIRAIO_BUILD_NUMBER="$BUILD_NUMBER" scripts/verify-channel-equivalence.sh | tee .artifacts/channel-audit.txt

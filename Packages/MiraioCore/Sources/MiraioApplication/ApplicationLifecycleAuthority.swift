@@ -40,7 +40,7 @@ public actor ApplicationLifecycleAuthority {
     transition(to: .handling(command, generation: submittedGeneration))
     let attemptID = environment.makeAttemptID()
 
-    await perform(command)
+    await perform(command, generation: submittedGeneration)
 
     guard generation == submittedGeneration else {
       await environment.diagnostics.record(
@@ -67,17 +67,22 @@ public actor ApplicationLifecycleAuthority {
     observers[observerID] = nil
   }
 
-  private func perform(_ command: ApplicationLifecycleCommand) async {
+  private func perform(
+    _ command: ApplicationLifecycleCommand,
+    generation submittedGeneration: UInt64
+  ) async {
     switch command {
     case .foregrounded:
       await environment.lifecycle.revalidateSubscription()
     case .backgrounding:
       await environment.lifecycle.checkpointWatchHistory()
+      guard generation == submittedGeneration else { return }
       await environment.lifecycle.cancelNonessentialWork()
     case .memoryPressure:
       await environment.lifecycle.releaseVolatileCaches()
     case .signOutRequested:
       await environment.lifecycle.cancelProtectedWork()
+      guard generation == submittedGeneration else { return }
       await environment.lifecycle.clearProtectedState()
     }
   }

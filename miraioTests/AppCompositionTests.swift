@@ -7,8 +7,8 @@ import Testing
 @Suite("macOS lifecycle composition")
 @MainActor
 struct AppCompositionTests {
-  @Test("the shell translates active and background phases into typed commands")
-  func translatesScenePhases() async {
+  @Test("the shell translates every platform lifecycle signal into a typed command")
+  func translatesLifecycleSignals() async {
     let authority = ApplicationLifecycleAuthority(environment: .testValue)
     let composition = AppComposition(lifecycle: authority)
 
@@ -17,6 +17,12 @@ struct AppCompositionTests {
 
     await composition.scenePhaseChanged(to: .background)
     #expect(await authority.currentState == .settled(.backgrounding, generation: 2))
+
+    await composition.receivedMemoryPressure()
+    #expect(await authority.currentState == .settled(.memoryPressure, generation: 3))
+
+    await composition.signOutRequested()
+    #expect(await authority.currentState == .settled(.signOutRequested, generation: 4))
   }
 }
 
