@@ -27,10 +27,20 @@ package protocol ArtworkDecoding: Sendable {
   func decode(_ data: Data, for request: ArtworkRequest) async throws -> ArtworkImage
 }
 
-private struct ImageIOArtworkDecoder: ArtworkDecoding {
-  func decode(_ data: Data, for request: ArtworkRequest) async throws -> ArtworkImage {
+package struct ImageIOArtworkDecoder: ArtworkDecoding {
+  private let executionObserver: @Sendable (Bool) -> Void
+
+  package init(
+    executionObserver: @escaping @Sendable (Bool) -> Void = { _ in }
+  ) {
+    self.executionObserver = executionObserver
+  }
+
+  package func decode(_ data: Data, for request: ArtworkRequest) async throws -> ArtworkImage {
+    let executionObserver = self.executionObserver
     let decodeTask = Task.detached(priority: .userInitiated) {
-      try ArtworkClient.decodeOffMain(data, request: request)
+      executionObserver(pthread_main_np() != 0)
+      return try ArtworkClient.decodeOffMain(data, request: request)
     }
     return try await withTaskCancellationHandler {
       try await decodeTask.value
@@ -60,10 +70,11 @@ public actor ArtworkClient: ArtworkLoading {
   }
 
   private static let maximumPixels = 40_000_000
-  private static let decodedCapacity = 128 * 1_024 * 1_024
+  package nonisolated static let decodedImageCapacityBytes = 128 * 1_024 * 1_024
 
   private let transport: any ArtworkTransport
   private let decoder: any ArtworkDecoding
+  private let decodedCapacity: Int
   private let downloadPermits = AsyncPermitPool(limit: 4)
   private let decodePermits = AsyncPermitPool(limit: 2)
   private var downloads: [URL: InFlightDownload] = [:]
@@ -75,16 +86,23 @@ public actor ArtworkClient: ArtworkLoading {
   public init(cacheDirectoryURL: URL) {
     transport = URLSessionArtworkTransport(cacheDirectoryURL: cacheDirectoryURL)
     decoder = ImageIOArtworkDecoder()
+    decodedCapacity = Self.decodedImageCapacityBytes
   }
 
   package init(transport: any ArtworkTransport) {
     self.transport = transport
     decoder = ImageIOArtworkDecoder()
+    decodedCapacity = Self.decodedImageCapacityBytes
   }
 
-  package init(transport: any ArtworkTransport, decoder: any ArtworkDecoding) {
+  package init(
+    transport: any ArtworkTransport,
+    decoder: any ArtworkDecoding,
+    decodedCapacity: Int = ArtworkClient.decodedImageCapacityBytes
+  ) {
     self.transport = transport
     self.decoder = decoder
+    self.decodedCapacity = max(0, decodedCapacity)
   }
 
   public func image(for request: ArtworkRequest) async throws -> ArtworkImage {
@@ -289,7 +307,7 @@ public actor ArtworkClient: ArtworkLoading {
 
   private func insertDecoded(_ image: ArtworkImage, for request: ArtworkRequest) {
     let bytesPerRow = image.cgImage.bytesPerRow
-    guard image.cgImage.height <= Self.decodedCapacity / max(1, bytesPerRow) else { return }
+    guard image.cgImage.height <= decodedCapacity / max(1, bytesPerRow) else { return }
     let cost = bytesPerRow * image.cgImage.height
     accessSequence &+= 1
     if let existing = decoded[request] { decodedCost -= existing.byteCost }
@@ -299,7 +317,7 @@ public actor ArtworkClient: ArtworkLoading {
       accessSequence: accessSequence
     )
     decodedCost += cost
-    while decodedCost > Self.decodedCapacity,
+    while decodedCost > decodedCapacity,
       let oldest = decoded.min(by: {
         $0.value.accessSequence < $1.value.accessSequence
       })
@@ -488,29 +506,45 @@ package actor URLSessionArtworkTransport: ArtworkTransport {
   }
 }
 
-private final class ArtworkRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+package final class ArtworkRedirectDelegate: NSObject, URLSessionTaskDelegate,
+  @unchecked Sendable
+{
   private static let maximumRedirectCount = 5
 
   private let lock = NSLock()
   private var redirectCounts: [Int: Int] = [:]
 
-  func urlSession(
+  package override init() {
+    super.init()
+  }
+
+  package func shouldFollowRedirect(taskIdentifier: Int, url: URL) -> Bool {
+    let redirectCount = lock.withLock {
+      let next = redirectCounts[taskIdentifier, default: 0] + 1
+      redirectCounts[taskIdentifier] = next
+      return next
+    }
+    guard redirectCount <= Self.maximumRedirectCount,
+      ArtworkLocationPolicy.hasAllowedSyntax(url),
+      let host = url.host,
+      ArtworkLocationPolicy.resolvesOnlyToPublicAddresses(host)
+    else { return false }
+    return true
+  }
+
+  package func completed(taskIdentifier: Int) {
+    lock.withLock { redirectCounts[taskIdentifier] = nil }
+  }
+
+  package func urlSession(
     _ session: URLSession,
     task: URLSessionTask,
     willPerformHTTPRedirection response: HTTPURLResponse,
     newRequest request: URLRequest,
     completionHandler: @escaping @Sendable (URLRequest?) -> Void
   ) {
-    let redirectCount = lock.withLock {
-      let next = redirectCounts[task.taskIdentifier, default: 0] + 1
-      redirectCounts[task.taskIdentifier] = next
-      return next
-    }
-    guard redirectCount <= Self.maximumRedirectCount,
-      let url = request.url,
-      ArtworkLocationPolicy.hasAllowedSyntax(url),
-      let host = url.host,
-      ArtworkLocationPolicy.resolvesOnlyToPublicAddresses(host)
+    guard let url = request.url,
+      shouldFollowRedirect(taskIdentifier: task.taskIdentifier, url: url)
     else {
       completionHandler(nil)
       return
@@ -518,11 +552,11 @@ private final class ArtworkRedirectDelegate: NSObject, URLSessionTaskDelegate, @
     completionHandler(request)
   }
 
-  func urlSession(
+  package func urlSession(
     _ session: URLSession,
     task: URLSessionTask,
     didCompleteWithError error: (any Error)?
   ) {
-    lock.withLock { redirectCounts[task.taskIdentifier] = nil }
+    completed(taskIdentifier: task.taskIdentifier)
   }
 }

@@ -3,6 +3,27 @@ import MiraioApplication
 import MiraioDomain
 import SwiftUI
 
+private struct ArtworkLoadsEnabledKey: EnvironmentKey {
+  static let defaultValue = true
+}
+
+private extension EnvironmentValues {
+  var artworkLoadsEnabled: Bool {
+    get { self[ArtworkLoadsEnabledKey.self] }
+    set { self[ArtworkLoadsEnabledKey.self] = newValue }
+  }
+}
+
+private struct ArtworkLoadTaskID: Hashable {
+  let request: ArtworkRequest?
+  let isEnabled: Bool
+}
+
+private struct ArtworkPrefetchTaskID: Hashable {
+  let requests: [ArtworkRequest]
+  let isEnabled: Bool
+}
+
 struct MiraioRootView: View {
   @Bindable var model: CatalogueViewModel
   let artwork: any ArtworkLoading
@@ -21,11 +42,13 @@ struct MiraioRootView: View {
 
         ZStack {
           CatalogueDestination(model: model, artwork: artwork)
+            .environment(\.artworkLoadsEnabled, model.destination == .catalogue)
             .opacity(model.destination == .catalogue ? 1 : 0)
             .allowsHitTesting(model.destination == .catalogue)
             .accessibilityHidden(model.destination != .catalogue)
 
           SearchDestination(model: model, artwork: artwork)
+            .environment(\.artworkLoadsEnabled, model.destination == .search)
             .opacity(model.destination == .search ? 1 : 0)
             .allowsHitTesting(model.destination == .search)
             .accessibilityHidden(model.destination != .search)
@@ -147,8 +170,10 @@ private struct CatalogueDestination: View {
               SeriesCard(series: series, artwork: artwork) {
                 Task { await model.select(series) }
               }
+              .id(series.id)
             }
           }
+          .scrollTargetLayout()
         }
 
         if model.isCatalogueLoading {
@@ -163,17 +188,17 @@ private struct CatalogueDestination: View {
       }
       .padding(12)
     }
+    .onScrollTargetVisibilityChange(idType: SeriesID.self) { ids in
+      model.catalogueVisibilityChanged(ids)
+    }
     .task(
-      id: artworkPrefetchWindow(in: model.catalogue, maximumCount: 8).compactMap(\.posterURL)
-    ) {
-      await artwork.prefetchOneViewport(
-        artworkRequests(
-          for: artworkPrefetchWindow(in: model.catalogue, maximumCount: 8),
-          width: 180,
-          height: 250,
-          scale: displayScale
-        )
+      id: ArtworkPrefetchTaskID(
+        requests: prefetchRequests,
+        isEnabled: model.destination == .catalogue
       )
+    ) {
+      guard model.destination == .catalogue else { return }
+      await artwork.prefetch(prefetchRequests)
     }
   }
 
@@ -192,6 +217,15 @@ private struct CatalogueDestination: View {
       .buttonStyle(.glass)
       .keyboardShortcut("r", modifiers: .command)
     }
+  }
+
+  private var prefetchRequests: [ArtworkRequest] {
+    artworkRequests(
+      for: model.catalogueArtworkPrefetch,
+      width: 180,
+      height: 250,
+      scale: displayScale
+    )
   }
 
   private var continueWatchingHero: some View {
@@ -270,8 +304,10 @@ private struct SearchDestination: View {
               SearchResultCard(series: series, artwork: artwork) {
                 Task { await model.select(series) }
               }
+              .id(series.id)
             }
           }
+          .scrollTargetLayout()
         }
 
         if model.isSearchLoading {
@@ -285,21 +321,30 @@ private struct SearchDestination: View {
       }
       .padding(22)
     }
+    .onScrollTargetVisibilityChange(idType: SeriesID.self) { ids in
+      model.searchVisibilityChanged(ids)
+    }
     .task(
-      id: artworkPrefetchWindow(in: model.searchResults, maximumCount: 6).compactMap(\.posterURL)
-    ) {
-      await artwork.prefetchOneViewport(
-        artworkRequests(
-          for: artworkPrefetchWindow(in: model.searchResults, maximumCount: 6),
-          width: 76,
-          height: 104,
-          scale: displayScale
-        )
+      id: ArtworkPrefetchTaskID(
+        requests: prefetchRequests,
+        isEnabled: model.destination == .search
       )
+    ) {
+      guard model.destination == .search else { return }
+      await artwork.prefetch(prefetchRequests)
     }
     .task(id: model.searchText) {
       await model.search()
     }
+  }
+
+  private var prefetchRequests: [ArtworkRequest] {
+    artworkRequests(
+      for: model.searchArtworkPrefetch,
+      width: 76,
+      height: 104,
+      scale: displayScale
+    )
   }
 }
 
@@ -318,15 +363,6 @@ private func artworkRequests<S: Sequence>(
       scale: Double(scale)
     )
   }
-}
-
-private func artworkPrefetchWindow(
-  in series: [Series],
-  maximumCount: Int
-) -> ArraySlice<Series> {
-  guard !series.isEmpty else { return [] }
-  let pageStart = ((series.count - 1) / 50) * 50
-  return series.dropFirst(pageStart).prefix(maximumCount)
 }
 
 private struct WatchHistoryDestination: View {
@@ -480,6 +516,7 @@ private struct SeriesInspector: View {
             Spacer()
             if model.selectedEpisodeID == episode.id {
               Image(systemName: "checkmark")
+                .accessibilityHidden(true)
             }
           }
           .padding(10)
@@ -489,6 +526,9 @@ private struct SeriesInspector: View {
           )
         }
         .buttonStyle(.plain)
+        .accessibilityValue(
+          model.selectedEpisodeID == episode.id ? Text("Selected") : Text("Not selected")
+        )
         .disabled(episode.isActive == false)
       }
     }
@@ -514,6 +554,7 @@ private struct SeriesInspector: View {
               Spacer()
               if model.selectedTranslationID == translation.id {
                 Image(systemName: "checkmark")
+                  .accessibilityHidden(true)
               }
             }
             .padding(10)
@@ -525,6 +566,11 @@ private struct SeriesInspector: View {
             )
           }
           .buttonStyle(.plain)
+          .accessibilityValue(
+            model.selectedTranslationID == translation.id
+              ? Text("Selected")
+              : Text("Not selected")
+          )
           .disabled(translation.isActive == false)
         }
       }
@@ -542,6 +588,7 @@ private struct SeriesArtwork: View {
   let height: CGFloat
 
   @Environment(\.displayScale) private var displayScale
+  @Environment(\.artworkLoadsEnabled) private var artworkLoadsEnabled
   @State private var image: CGImage?
 
   var body: some View {
@@ -560,8 +607,8 @@ private struct SeriesArtwork: View {
     }
     .frame(maxWidth: width, minHeight: height, maxHeight: height)
     .clipShape(RoundedRectangle(cornerRadius: 16))
-    .task(id: request) {
-      guard let request else { return }
+    .task(id: ArtworkLoadTaskID(request: request, isEnabled: artworkLoadsEnabled)) {
+      guard artworkLoadsEnabled, let request else { return }
       image = try? await artwork.image(for: request).cgImage
     }
   }

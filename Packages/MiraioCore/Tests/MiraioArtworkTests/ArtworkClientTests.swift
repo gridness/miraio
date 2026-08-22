@@ -162,8 +162,8 @@ struct ArtworkClientTests {
     for load in loads { _ = try await load.value }
   }
 
-  @Test("prefetch is capped to one eight-card viewport")
-  func capsPrefetchToOneViewport() async throws {
+  @Test("prefetch loads exactly the caller-selected requests")
+  func prefetchesSelectedRequests() async throws {
     let firstURL = try #require(URL(string: "https://images.example.test/0.png"))
     let png = try #require(
       Data(
@@ -174,7 +174,7 @@ struct ArtworkClientTests {
       response: ArtworkResponse(data: png, mimeType: "image/png", finalURL: firstURL)
     )
     let client = ArtworkClient(transport: transport)
-    let requests = try (0..<12).map { index in
+    let requests = try (0..<8).map { index in
       try #require(
         ArtworkRequest(
           url: URL(string: "https://images.example.test/\(index).png")!,
@@ -185,7 +185,7 @@ struct ArtworkClientTests {
       )
     }
 
-    await client.prefetchOneViewport(requests)
+    await client.prefetch(requests)
 
     #expect(await transport.requestCount == 8)
   }
@@ -273,6 +273,75 @@ struct ArtworkClientTests {
     #expect(throws: ArtworkFailure.oversizedImage) {
       try ArtworkClient.validatePixelDimensions(width: 8_001, height: 5_000)
     }
+  }
+
+  @Test("the production ImageIO decoder executes off the main thread")
+  @MainActor
+  func decodesOffMainThread() async throws {
+    let executionRecorder = ThreadExecutionRecorder()
+    let decoder = ImageIOArtworkDecoder { isMainThread in
+      executionRecorder.record(isMainThread)
+    }
+    let url = try #require(URL(string: "https://images.example.test/poster.png"))
+    let request = try #require(
+      ArtworkRequest(url: url, pixelWidth: 300, pixelHeight: 450, scale: 2)
+    )
+    let png = try #require(
+      Data(
+        base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+      )
+    )
+
+    let image = try await decoder.decode(png, for: request)
+
+    #expect(image.cgImage.width == 1)
+    #expect(executionRecorder.values == [false])
+  }
+
+  @Test("decoded image LRU obeys the 128 MiB production cap")
+  func evictsLeastRecentlyUsedDecodedImage() async throws {
+    let firstURL = try #require(URL(string: "https://images.example.test/0.png"))
+    let image = try onePixelArtworkImage()
+    let oneImageCost = image.cgImage.bytesPerRow * image.cgImage.height
+    let transport = StaticArtworkTransport(
+      response: ArtworkResponse(data: Data([0]), mimeType: "image/png", finalURL: firstURL)
+    )
+    let client = ArtworkClient(
+      transport: transport,
+      decoder: StaticArtworkDecoder(image: image),
+      decodedCapacity: oneImageCost * 2
+    )
+    let requests = try (0..<3).map { index in
+      try #require(
+        ArtworkRequest(
+          url: URL(string: "https://images.example.test/\(index).png")!,
+          pixelWidth: 180,
+          pixelHeight: 250,
+          scale: 2
+        )
+      )
+    }
+
+    for request in requests { _ = try await client.image(for: request) }
+    _ = try await client.image(for: requests[0])
+
+    #expect(ArtworkClient.decodedImageCapacityBytes == 128 * 1_024 * 1_024)
+    #expect(await transport.requestCount == 4)
+  }
+
+  @Test("redirect policy allows five public hops and rejects the sixth or a private hop")
+  func capsAndValidatesRedirects() throws {
+    let delegate = ArtworkRedirectDelegate()
+    let publicURL = try #require(URL(string: "https://93.184.216.34/poster.png"))
+    let privateURL = try #require(URL(string: "https://127.0.0.1/poster.png"))
+
+    for _ in 0..<5 {
+      #expect(delegate.shouldFollowRedirect(taskIdentifier: 1, url: publicURL))
+    }
+    #expect(!delegate.shouldFollowRedirect(taskIdentifier: 1, url: publicURL))
+    #expect(!delegate.shouldFollowRedirect(taskIdentifier: 2, url: privateURL))
+    delegate.completed(taskIdentifier: 1)
+    #expect(delegate.shouldFollowRedirect(taskIdentifier: 1, url: publicURL))
   }
 }
 
@@ -420,6 +489,14 @@ private actor BlockingArtworkDecoder: ArtworkDecoding {
   }
 }
 
+private struct StaticArtworkDecoder: ArtworkDecoding {
+  let image: ArtworkImage
+
+  func decode(_ data: Data, for request: ArtworkRequest) -> ArtworkImage {
+    image
+  }
+}
+
 private actor CancellationAwareArtworkDecoder: ArtworkDecoding {
   private(set) var wasCancelled = false
   private var observer: CheckedContinuation<Void, Never>?
@@ -452,4 +529,17 @@ private func onePixelArtworkImage() throws -> ArtworkImage {
   )
   let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
   return ArtworkImage(cgImage: try #require(CGImageSourceCreateImageAtIndex(source, 0, nil)))
+}
+
+private final class ThreadExecutionRecorder: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage: [Bool] = []
+
+  var values: [Bool] {
+    lock.withLock { storage }
+  }
+
+  func record(_ isMainThread: Bool) {
+    lock.withLock { storage.append(isMainThread) }
+  }
 }

@@ -67,16 +67,22 @@ final class MiraioLaunchTests: XCTestCase {
     app.launch()
 
     let series = app.buttons["series.41"]
+    let episode = app.buttons["The Journey's End"]
+    let translation = app.buttons["AniLibria · dub · ru · 1080p"]
     XCTAssertTrue(series.waitForExistence(timeout: 5))
     series.click()
-    XCTAssertTrue(app.buttons["The Journey's End"].waitForExistence(timeout: 3))
-    XCTAssertTrue(app.buttons["AniLibria · dub · ru · 1080p"].exists)
+    XCTAssertTrue(episode.waitForExistence(timeout: 3))
+    XCTAssertTrue(translation.exists)
+    XCTAssertEqual(episode.value as? String, "Selected")
+    XCTAssertEqual(translation.value as? String, "Selected")
 
     app.buttons["source.search"].click()
     XCTAssertTrue(app.buttons["Close Series inspector"].exists)
     app.buttons["source.catalogue"].click()
-    XCTAssertTrue(app.buttons["The Journey's End"].exists)
-    XCTAssertTrue(app.buttons["AniLibria · dub · ru · 1080p"].exists)
+    XCTAssertTrue(episode.exists)
+    XCTAssertTrue(translation.exists)
+    XCTAssertEqual(episode.value as? String, "Selected")
+    XCTAssertEqual(translation.value as? String, "Selected")
 
     let evidence = XCTAttachment(screenshot: app.screenshot())
     evidence.name = "CAT-06 Series inspector context"

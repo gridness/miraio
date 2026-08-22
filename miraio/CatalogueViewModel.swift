@@ -37,6 +37,8 @@ final class CatalogueViewModel {
   var searchText = ""
   var searchResults: [Series] = []
   var searchCursor: SeriesCursor?
+  var catalogueArtworkPrefetch: [Series] = []
+  var searchArtworkPrefetch: [Series] = []
   var selectedSeriesID: SeriesID?
   var selectedDetails: SeriesDetails?
   var selectedEpisodeID: EpisodeID?
@@ -51,6 +53,8 @@ final class CatalogueViewModel {
   private var catalogueOperationID: UUID?
   private var searchOperationID: UUID?
   private var inspectorOperation: (id: UUID, task: Task<SeriesDetails, any Error>)?
+  private var catalogueVisibleSeriesIDs: [SeriesID] = []
+  private var searchVisibleSeriesIDs: [SeriesID] = []
 
   init(discovery: CatalogueDiscovery) {
     self.discovery = discovery
@@ -96,6 +100,8 @@ final class CatalogueViewModel {
       isSearchLoading = false
       searchResults = []
       searchCursor = nil
+      searchArtworkPrefetch = []
+      searchVisibleSeriesIDs = []
       searchNotice = nil
       return
     }
@@ -200,12 +206,32 @@ final class CatalogueViewModel {
     selectedTranslationID = nil
   }
 
+  func catalogueVisibilityChanged(_ ids: [SeriesID]) {
+    catalogueVisibleSeriesIDs = ids
+    catalogueArtworkPrefetch = artworkPrefetchWindow(
+      in: catalogue,
+      visibleIDs: ids
+    )
+  }
+
+  func searchVisibilityChanged(_ ids: [SeriesID]) {
+    searchVisibleSeriesIDs = ids
+    searchArtworkPrefetch = artworkPrefetchWindow(
+      in: searchResults,
+      visibleIDs: ids
+    )
+  }
+
   func clearCache() async {
     await discovery.clearCache()
     catalogue = []
     catalogueCursor = nil
+    catalogueArtworkPrefetch = []
+    catalogueVisibleSeriesIDs = []
     searchResults = []
     searchCursor = nil
+    searchArtworkPrefetch = []
+    searchVisibleSeriesIDs = []
     await loadCatalogue(intent: .explicitReload)
   }
 
@@ -255,11 +281,19 @@ final class CatalogueViewModel {
       let result = mode == .append ? current.appending(page) : page
       searchResults = result.series
       searchCursor = result.nextCursor
+      searchArtworkPrefetch = artworkPrefetchWindow(
+        in: result.series,
+        visibleIDs: searchVisibleSeriesIDs
+      )
     case .catalogue:
       let current = CataloguePage(series: catalogue, nextCursor: catalogueCursor)
       let result = mode == .append ? current.appending(page) : page
       catalogue = result.series
       catalogueCursor = result.nextCursor
+      catalogueArtworkPrefetch = artworkPrefetchWindow(
+        in: result.series,
+        visibleIDs: catalogueVisibleSeriesIDs
+      )
     }
   }
 
@@ -271,4 +305,18 @@ final class CatalogueViewModel {
       catalogueNotice = notice
     }
   }
+}
+
+func artworkPrefetchWindow(
+  in series: [Series],
+  visibleIDs: [SeriesID]
+) -> [Series] {
+  let indices = Set(visibleIDs).compactMap { id in
+    series.firstIndex(where: { $0.id == id })
+  }
+  guard let lastVisibleIndex = indices.max(), !indices.isEmpty else { return [] }
+  let viewportCount = indices.count
+  return Array(
+    series.dropFirst(lastVisibleIndex + 1).prefix(viewportCount)
+  )
 }

@@ -1,4 +1,5 @@
 import MiraioApplication
+import MiraioDomain
 import SwiftUI
 import Testing
 
@@ -23,6 +24,26 @@ struct AppCompositionTests {
 
     await composition.signOutRequested()
     #expect(await authority.currentState == .settled(.signOutRequested, generation: 4))
+  }
+
+  @Test("artwork prefetch tracks exactly one viewport beyond visible Series")
+  func derivesNextArtworkViewport() throws {
+    let series = try (1...10).map { rawValue in
+      Series(id: try #require(SeriesID(rawValue)))
+    }
+
+    let wideWindow = artworkPrefetchWindow(
+      in: series,
+      visibleIDs: [series[2].id, series[3].id, series[4].id]
+    )
+    let inspectorNarrowedWindow = artworkPrefetchWindow(
+      in: series,
+      visibleIDs: [series[4].id]
+    )
+
+    #expect(wideWindow.map(\.id) == [series[5].id, series[6].id, series[7].id])
+    #expect(inspectorNarrowedWindow.map(\.id) == [series[5].id])
+    #expect(artworkPrefetchWindow(in: series, visibleIDs: []).isEmpty)
   }
 }
 

@@ -42,9 +42,9 @@ public protocol ArtworkLoading: Sendable {
 }
 
 extension ArtworkLoading {
-  public func prefetchOneViewport(_ requests: [ArtworkRequest]) async {
+  public func prefetch(_ requests: [ArtworkRequest]) async {
     await withTaskGroup(of: Void.self) { group in
-      for request in requests.prefix(8) {
+      for request in requests {
         group.addTask {
           _ = try? await self.image(for: request)
         }
